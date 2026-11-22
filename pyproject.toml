@@ -18,6 +18,11 @@ api = [
     "fastapi>=0.136,<1",
     "mangum>=0.21,<1",
 ]
+frontend = [
+    { include-group = "modelos" },
+    "httpx2>=2,<3",
+    "streamlit>=1.51,<2",
+]
 scraping = [
     { include-group = "aws" },
     "lxml",

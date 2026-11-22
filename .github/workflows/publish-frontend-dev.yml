@@ -1,0 +1,252 @@
+name: Publish frontend image to dev
+
+on:
+  pull_request:
+    paths:
+      - ".dockerignore"
+      - ".github/workflows/publish-frontend-dev.yml"
+      - "Dockerfile"
+      - "api/models/**"
+      - "frontend/**"
+      - "infra/bootstrap/**"
+      - "infra/environments/dev/frontend/**"
+      - "infra/modules/container_registry/**"
+      - "pyproject.toml"
+      - "tests/frontend/**"
+      - "uv.lock"
+  push:
+    branches: [main]
+    paths:
+      - ".dockerignore"
+      - ".github/workflows/publish-frontend-dev.yml"
+      - "Dockerfile"
+      - "api/models/**"
+      - "frontend/**"
+      - "infra/bootstrap/**"
+      - "infra/environments/dev/frontend/**"
+      - "infra/modules/container_registry/**"
+      - "pyproject.toml"
+      - "tests/frontend/**"
+      - "uv.lock"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AWS_ACCOUNT_ID: "065451207233"
+  AWS_REGION: eu-west-3
+  TF_STATE_BUCKET: pipeline-fondos-terraform-state-065451207233
+  TERRAFORM_VERSION: "1.15.8"
+  UV_VERSION: "0.13.7"
+
+jobs:
+  quality:
+    name: Test and validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install 3.14
+
+      - name: Install frontend and development dependencies
+        run: uv sync --group dev --group frontend --locked
+
+      - name: Lint frontend
+        run: uv run --group dev --group frontend ruff check frontend tests/frontend
+
+      - name: Type-check frontend
+        run: uv run --group dev --group frontend mypy frontend
+
+      - name: Run frontend tests
+        run: uv run --group dev --group frontend pytest -q tests/frontend
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Check Terraform formatting
+        run: terraform fmt -check -recursive infra
+
+      - name: Validate bootstrap infrastructure
+        run: |
+          terraform -chdir=infra/bootstrap init -backend=false -input=false
+          terraform -chdir=infra/bootstrap validate
+
+      - name: Validate frontend registry infrastructure
+        run: |
+          terraform -chdir=infra/environments/dev/frontend init -backend=false -input=false
+          terraform -chdir=infra/environments/dev/frontend validate
+
+  container:
+    name: Build and publish ARM64 image
+    needs: quality
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    concurrency:
+      group: publish-frontend-dev
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build ARM64 image without publishing
+        if: github.ref != 'refs/heads/main'
+        run: |
+          docker buildx build \
+            --platform linux/arm64 \
+            --load \
+            --provenance=false \
+            --tag pipeline-fondos-frontend:check \
+            .
+
+      - name: Require deployment role variable
+        if: github.ref == 'refs/heads/main'
+        env:
+          AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          if [ -z "${AWS_DEPLOY_ROLE_ARN}" ]; then
+            echo "Repository variable AWS_DEPLOY_ROLE_ARN is required" >&2
+            exit 1
+          fi
+
+      - name: Set up Terraform
+        if: github.ref == 'refs/heads/main'
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials through OIDC
+        if: github.ref == 'refs/heads/main'
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: frontend-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
+          mask-aws-account-id: true
+
+      - name: Provision frontend registry
+        if: github.ref == 'refs/heads/main'
+        id: registry
+        run: |
+          terraform -chdir=infra/environments/dev/frontend init \
+            -input=false \
+            -backend-config="bucket=${TF_STATE_BUCKET}"
+          terraform -chdir=infra/environments/dev/frontend plan \
+            -input=false \
+            -out=tfplan
+          terraform -chdir=infra/environments/dev/frontend apply \
+            -input=false \
+            tfplan
+
+          repository_name=$(terraform -chdir=infra/environments/dev/frontend output -raw repository_name)
+          repository_url=$(terraform -chdir=infra/environments/dev/frontend output -raw repository_url)
+          registry="${repository_url%%/*}"
+
+          {
+            echo "repository_name=${repository_name}"
+            echo "repository_url=${repository_url}"
+            echo "registry=${registry}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Check whether the commit image already exists
+        if: github.ref == 'refs/heads/main'
+        id: image
+        env:
+          ECR_REPOSITORY_NAME: ${{ steps.registry.outputs.repository_name }}
+        run: |
+          set +e
+          response=$(aws ecr describe-images \
+            --repository-name "${ECR_REPOSITORY_NAME}" \
+            --image-ids "imageTag=${GITHUB_SHA}" 2>&1)
+          status=$?
+          set -e
+
+          if [ "${status}" -eq 0 ]; then
+            echo "exists=true" >> "${GITHUB_OUTPUT}"
+          elif [[ "${response}" == *"ImageNotFoundException"* ]]; then
+            echo "exists=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "${response}" >&2
+            exit "${status}"
+          fi
+
+      - name: Authenticate Docker with ECR
+        if: github.ref == 'refs/heads/main' && steps.image.outputs.exists == 'false'
+        env:
+          ECR_REGISTRY: ${{ steps.registry.outputs.registry }}
+        run: |
+          aws ecr get-login-password --region "${AWS_REGION}" \
+            | docker login \
+              --username AWS \
+              --password-stdin \
+              "${ECR_REGISTRY}"
+
+      - name: Build and publish ARM64 image
+        if: github.ref == 'refs/heads/main' && steps.image.outputs.exists == 'false'
+        env:
+          ECR_REPOSITORY_URL: ${{ steps.registry.outputs.repository_url }}
+        run: |
+          docker buildx build \
+            --platform linux/arm64 \
+            --push \
+            --provenance=false \
+            --tag "${ECR_REPOSITORY_URL}:${GITHUB_SHA}" \
+            .
+
+      - name: Resolve published image digest
+        if: github.ref == 'refs/heads/main'
+        id: published
+        env:
+          ECR_REPOSITORY_NAME: ${{ steps.registry.outputs.repository_name }}
+        run: |
+          image_digest=$(aws ecr describe-images \
+            --repository-name "${ECR_REPOSITORY_NAME}" \
+            --image-ids "imageTag=${GITHUB_SHA}" \
+            --query "imageDetails[0].imageDigest" \
+            --output text)
+
+          if [ -z "${image_digest}" ] || [ "${image_digest}" = "None" ]; then
+            echo "ECR did not return the published image digest" >&2
+            exit 1
+          fi
+
+          echo "digest=${image_digest}" >> "${GITHUB_OUTPUT}"
+
+      - name: Publication summary
+        if: github.ref == 'refs/heads/main'
+        env:
+          ECR_REPOSITORY_URL: ${{ steps.registry.outputs.repository_url }}
+          IMAGE_ALREADY_EXISTED: ${{ steps.image.outputs.exists }}
+          IMAGE_DIGEST: ${{ steps.published.outputs.digest }}
+        run: |
+          {
+            echo "## Frontend ARM64 image"
+            echo
+            echo "- Image: ${ECR_REPOSITORY_URL}:${GITHUB_SHA}"
+            echo "- Digest: ${IMAGE_DIGEST}"
+            echo "- Already existed: ${IMAGE_ALREADY_EXISTED}"
+            echo "- Platform: linux/arm64"
+          } >> "${GITHUB_STEP_SUMMARY}"
