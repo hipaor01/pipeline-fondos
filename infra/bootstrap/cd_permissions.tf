@@ -82,6 +82,7 @@ data "aws_iam_policy_document" "github_actions_cd" {
       "lambda:GetFunctionCodeSigningConfig",
       "lambda:GetFunctionConfiguration",
       "lambda:GetPolicy",
+      "lambda:ListVersionsByFunction",
       "lambda:ListTags",
       "lambda:RemovePermission",
       "lambda:TagResource",
@@ -200,7 +201,10 @@ data "aws_iam_policy_document" "github_actions_cd" {
       "apigateway:POST",
       "apigateway:PUT",
     ]
-    resources = ["arn:aws:apigateway:${var.aws_region}::/apis*"]
+    resources = [
+      "arn:aws:apigateway:${var.aws_region}::/apis*",
+      "arn:aws:apigateway:${var.aws_region}::/tags/*",
+    ]
   }
 
   statement {
