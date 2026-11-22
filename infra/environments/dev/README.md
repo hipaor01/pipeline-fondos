@@ -14,6 +14,11 @@ El workflow `.github/workflows/deploy-api-dev.yml` se encarga de:
 - proporcionar `lambda_package` a este root;
 - aplicar la infraestructura de la API y comprobar `/health`.
 
+El frontend usa el root separado `dev/frontend` y el workflow
+`.github/workflows/publish-frontend-dev.yml`. Este crea el repositorio ECR y
+publica una imagen Linux ARM64 inmutable por commit. El estado separado evita
+que la publicación del frontend bloquee o modifique el estado de la API.
+
 La pipeline necesita que `infra/bootstrap` esté aplicado y que la variable de
 repositorio `AWS_DEPLOY_ROLE_ARN` contenga el output
 `github_actions_cd_role_arn`.

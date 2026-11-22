@@ -11,6 +11,8 @@ locals {
     "${var.project_name}-artifacts-${data.aws_caller_identity.current.account_id}"
   )
 
+  frontend_repository_name = "${var.project_name}-${var.deployment_environment}-frontend"
+
   cd_role_name               = "${var.project_name}-${var.deployment_environment}-github-deploy"
   lambda_execution_role_name = "${var.project_name}-${var.deployment_environment}-api-exec"
   lambda_boundary_name       = "${var.project_name}-${var.deployment_environment}-lambda-boundary"

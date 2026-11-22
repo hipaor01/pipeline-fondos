@@ -146,6 +146,79 @@ en memoria y puede ejecutarse localmente con:
 uv run --group dev uvicorn api.app:app --reload
 ```
 
+El frontend Streamlit se ejecuta en otra terminal desde la raíz del repositorio:
+
+```bash
+uv run --group frontend python -m streamlit run frontend/app.py
+```
+
+Se usa `python -m streamlit` para conservar la raíz del repositorio en la ruta
+de importación de Python. Por defecto, el frontend consulta la API en
+`http://localhost:8000`; se puede cambiar mediante `API_BASE_URL`.
+
+### Contenedor local del frontend
+
+La imagen se construye para Linux ARM64, la misma arquitectura que se usará en
+ECS sobre AWS Graviton. Ejecuta Streamlit como un usuario sin privilegios y
+publica el puerto `8501`. Para construirla y conectarla con la API que se
+ejecuta en el host:
+
+```bash
+docker buildx build \
+  --platform linux/arm64 \
+  --load \
+  -t pipeline-fondos-frontend:local \
+  .
+docker run --rm \
+  --name pipeline-fondos-frontend \
+  -p 8501:8501 \
+  -e API_BASE_URL=http://host.docker.internal:8000 \
+  pipeline-fondos-frontend:local
+```
+
+La aplicación queda disponible en `http://localhost:8501`. Su comprobación de
+salud ligera, que no consulta la API ni otras dependencias, está en:
+
+```bash
+curl --fail http://localhost:8501/_stcore/health
+docker inspect \
+  --format '{{.State.Health.Status}}' \
+  pipeline-fondos-frontend
+```
+
+En ECS Express Mode se debe seleccionar explícitamente la arquitectura `ARM64`,
+ya que `X86_64` es la opción predeterminada. También se debe configurar el puerto
+del contenedor como `8501` y el health check del balanceador como
+`/_stcore/health`. El `HEALTHCHECK` de la imagen sirve para Docker local, pero
+ECS solo informa de la salud del contenedor si el mismo comando se declara
+posteriormente en la definición de tarea.
+
+### Publicación del frontend en ECR
+
+El workflow [`.github/workflows/publish-frontend-dev.yml`](.github/workflows/publish-frontend-dev.yml)
+valida el frontend y Terraform en cada pull request. Cuando los cambios llegan
+a `main`, utiliza un runner ARM64 nativo para:
+
+- crear o actualizar el repositorio privado `pipeline-fondos-dev-frontend`;
+- construir la imagen para `linux/arm64`;
+- etiquetarla con el SHA completo e inmutable del commit;
+- publicarla en ECR y registrar su digest en el resumen de la ejecución.
+
+Antes de la primera ejecución hay que volver a aplicar `infra/bootstrap` para
+ampliar los permisos del rol OIDC al nuevo estado y al repositorio ECR:
+
+```bash
+terraform -chdir=infra/bootstrap init \
+  -backend-config="bucket=pipeline-fondos-terraform-state-065451207233"
+terraform -chdir=infra/bootstrap plan
+terraform -chdir=infra/bootstrap apply
+```
+
+Las etiquetas del repositorio son inmutables, las imágenes se escanean al
+publicarse y una política de ciclo de vida conserva únicamente las 30 más
+recientes. Si se reejecuta la pipeline para un SHA ya publicado, reutiliza esa
+imagen en lugar de intentar sobrescribirla.
+
 En AWS Lambda, el adaptador Mangum expone la misma aplicación mediante el
 handler `api.lambda_handler.handler`. Está configurado para eventos de API
 Gateway HTTP API v2 y no ejecuta el ciclo de vida ASGI, ya que actualmente la
