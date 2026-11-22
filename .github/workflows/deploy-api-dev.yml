@@ -5,18 +5,26 @@ on:
     paths:
       - ".github/workflows/deploy-api-dev.yml"
       - "api/**"
-      - "infra/**"
-      - "tests/**"
+      - "infra/bootstrap/**"
+      - "infra/environments/dev/*.tf"
+      - "infra/environments/dev/artifacts/**"
+      - "infra/modules/api/**"
+      - "infra/modules/artifacts/**"
       - "pyproject.toml"
+      - "tests/api/**"
       - "uv.lock"
   push:
     branches: [main]
     paths:
       - ".github/workflows/deploy-api-dev.yml"
       - "api/**"
-      - "infra/**"
-      - "tests/**"
+      - "infra/bootstrap/**"
+      - "infra/environments/dev/*.tf"
+      - "infra/environments/dev/artifacts/**"
+      - "infra/modules/api/**"
+      - "infra/modules/artifacts/**"
       - "pyproject.toml"
+      - "tests/api/**"
       - "uv.lock"
   workflow_dispatch:
 
@@ -55,13 +63,13 @@ jobs:
         run: uv sync --group dev --locked
 
       - name: Lint Python
-        run: uv run --group dev ruff check api tests
+        run: uv run --group dev ruff check api tests/api
 
       - name: Type-check API
         run: uv run --group dev mypy
 
       - name: Run tests
-        run: uv run --group dev pytest -q
+        run: uv run --group dev pytest -q tests/api
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
