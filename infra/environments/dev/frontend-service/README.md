@@ -23,3 +23,17 @@ terraform -chdir=infra/environments/dev/frontend-service init \
 terraform -chdir=infra/environments/dev/frontend-service plan \
   -var='frontend_image=065451207233.dkr.ecr.eu-west-3.amazonaws.com/pipeline-fondos-dev-frontend@sha256:REPLACE_DIGEST'
 ```
+
+## Encendido y apagado manual
+
+El workflow `Manage frontend service in dev` permite gestionar el coste del
+entorno sin borrar imágenes ni la API. Debe ejecutarse desde `main`:
+
+- `start` obtiene el último digest etiquetado de ECR, aplica este root y comprueba
+  `/_stcore/health`;
+- `stop` requiere activar `confirm_stop` y ejecuta un plan de destrucción solo
+  para este root.
+
+Ambas acciones comparten el grupo de concurrencia del workflow de publicación,
+por lo que no pueden modificar el servicio al mismo tiempo. Cualquier nuevo
+despliegue del frontend a `main` lo volverá a crear.

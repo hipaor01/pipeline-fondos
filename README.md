@@ -233,6 +233,14 @@ Streamlit escucha en el puerto `8501`; el balanceador consulta
 la API y los logs se conservan 14 días en CloudWatch. Cada despliegue utiliza la
 imagen por digest, nunca una etiqueta mutable.
 
+Para evitar el coste fijo cuando no se utiliza el entorno, el workflow manual
+`Manage frontend service in dev` permite ejecutar `start` o `stop` desde la rama
+`main`. `start` despliega el último digest etiquetado disponible en ECR y
+comprueba el health check. `stop` exige confirmar la interrupción y destruye
+únicamente el root `frontend-service`; conserva la API, ECR, los artefactos y el
+backend de Terraform. Un despliegue posterior del frontend a `main` volverá a
+crear el servicio aunque se hubiera detenido manualmente.
+
 En AWS Lambda, el adaptador Mangum expone la misma aplicación mediante el
 handler `api.lambda_handler.handler`. Está configurado para eventos de API
 Gateway HTTP API v2 y no ejecuta el ciclo de vida ASGI, ya que actualmente la
