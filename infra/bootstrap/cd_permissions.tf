@@ -200,6 +200,8 @@ data "aws_iam_policy_document" "github_actions_cd" {
       "apigateway:PATCH",
       "apigateway:POST",
       "apigateway:PUT",
+      "apigateway:TagResource",
+      "apigateway:UntagResource",
     ]
     resources = [
       "arn:aws:apigateway:${var.aws_region}::/apis*",
