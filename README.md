@@ -67,7 +67,7 @@ Las páginas son HTML estático (no necesitan JavaScript), así que basta con `r
 1. Descarga la página de listado y extrae los enlaces de la lista del footer (XPath anterior). Se queda solo con URLs del tipo `/fondos-de-inversion/<slug>/`.
 2. Para cada fondo, abre su página, localiza la lista de documentos y selecciona los enlaces cuyo texto (normalizado: minúsculas, sin acentos) es exactamente `datos fundamentales` o `ficha del fondo`.
 3. Comprueba al inicio que el bucket es accesible (si no, termina con error).
-4. Descarga cada PDF en memoria y lo sube a S3 con `ContentType: application/pdf` y la URL original en los metadatos (`x-amz-meta-url-origen`). Si se relanza el mismo día, los objetos se sobrescriben.
+4. Descarga cada PDF en memoria y lo sube a S3 con `ContentType: application/pdf` y metadatos de procedencia, fecha UTC, SHA-256 y correlación. Si se relanza el mismo día, se escribe la misma clave; con versionado activo se crea una nueva versión.
 5. Muestra un resumen con los documentos descargados y los fallos.
 
 Antes de la subida se comprueba la cabecera y se abre el PDF con `pypdf` para
@@ -76,6 +76,20 @@ documentos de una ejecución generan la misma clave S3, se informa el conflicto
 y no se sobrescribe el primero.
 Cada ejecución genera un identificador de correlación, salvo que se facilite uno
 con `--correlation-id`; aparece en los mensajes y en los metadatos de S3.
+El resultado distingue ejecuciones completas, parciales y fallidas; la CLI
+devuelve un código distinto de cero si hay fallos o no se sube ningún documento.
+Los documentos ausentes se identifican por separado y no se consideran errores.
+Se guarda un manifiesto JSON por intento bajo `manifests/bestinver/`, con las
+subidas, versiones S3, huellas, ausencias y fallos. Un error al guardar el
+manifiesto se refleja en el resultado. Una interrupción abrupta puede dejar
+objetos sin manifiesto y requiere conciliarlos mediante S3 y los logs. El bucket
+debe tener el versionado activado; una subida sin versión se informa como fallo.
+El scraper comprueba el versionado antes de subir, por lo que necesita también
+`s3:GetBucketVersioning` en el bucket.
+Repetir una captura puede crear nuevas versiones físicas incluso si los bytes
+no cambian. El hash permite reconocer el contenido repetido, pero la deduplicación
+lógica y la conservación de las procedencias corresponden al procesamiento P2;
+todavía no están implementadas en este repositorio.
 
 **Respaldo:** si un XPath deja de encontrar nada (porque cambie la maquetación de la web), el script usa un selector más general (enlaces del footer a `/fondos-de-inversion/` o enlaces a `.pdf` dentro de `<main>`) y muestra un aviso.
 
@@ -83,15 +97,15 @@ con `--correlation-id`; aparece en los mensajes y en los metadatos de S3.
 
 ```
 s3://curso-miax-pipeline-fondos/
-└── bestinver/
+└── raw/bestinver/
     └── 20261119/
-        ├── bestinfond_datos_fundamentales.pdf
+        ├── bestinfond_kid.pdf
         ├── bestinfond_ficha_fondo.pdf
-        ├── bestinver-internacional_datos_fundamentales.pdf
+        ├── bestinver-internacional_kid.pdf
         └── ...
 ```
 
-Cada ejecución guarda los documentos en una carpeta con la fecha (`AAAAMMDD`), así se conserva el histórico de versiones de los KID. Nombre de cada fichero: `<slug-del-fondo>_<tipo>.pdf`.
+Cada ejecución guarda los documentos en una carpeta con la fecha de Madrid (`AAAAMMDD`). Nombre de cada fichero: `<slug-del-fondo>_<tipo>.pdf`, con tipos `kid` y `ficha_fondo`. Los objetos anteriores permanecen en sus rutas originales.
 
 ### Resultados (ejecución del 19/11/2026)
 

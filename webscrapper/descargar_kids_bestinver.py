@@ -8,7 +8,7 @@ Flujo:
   2. Entra en la página de cada fondo y lee la lista de documentos
      (XPath /html/body/div[1]/div/main/section[4]/div[1]/div[2]/ul).
   3. Descarga los documentos cuyo texto coincide con los buscados y los sube
-     a s3://<bucket>/<prefijo>/<AAAAMMDD>/<slug>_<tipo>.pdf.
+    a s3://<bucket>/raw/<prefijo>/<AAAAMMDD>/<slug>_<tipo>.pdf.
 
 Las credenciales de AWS se toman de la configuración estándar
 (aws configure / aws login, variables de entorno o perfil con AWS_PROFILE).
@@ -21,14 +21,19 @@ Uso:
 
 import argparse
 import builtins
+import hashlib
 import io
+import json
 import re
+import sys
 import time
 import unicodedata
 from contextvars import ContextVar
-from datetime import date, datetime
-from urllib.parse import urljoin, urlparse
+from dataclasses import asdict
+from datetime import datetime, timezone
+from urllib.parse import quote, urljoin, urlparse
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import boto3
 import requests
@@ -38,9 +43,9 @@ from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
 if __package__:
-    from .base import Documento
+    from .base import Documento, Incidencia, ResultadoIngesta, Subida
 else:
-    from base import Documento
+    from base import Documento, Incidencia, ResultadoIngesta, Subida
 
 BASE_URL = "https://www.bestinver.es/fondos-de-inversion/"
 
@@ -147,14 +152,22 @@ def descargar(session: requests.Session, url: str) -> bytes:
     return resp.content
 
 
-def subir_s3(s3, bucket: str, clave: str, contenido: bytes, url_origen: str) -> None:
-    s3.put_object(
+def subir_s3(s3, bucket: str, clave: str, contenido: bytes, documento: Documento, fecha_descarga: datetime) -> str | None:
+    respuesta = s3.put_object(
         Bucket=bucket,
         Key=clave,
         Body=contenido,
         ContentType="application/pdf",
-        Metadata={"url-origen": url_origen, "correlation-id": CORRELATION_ID.get() or ""},
+        Metadata={
+            "gestora": documento.gestora,
+            "tipo-documento": documento.tipo,
+            "url-origen": quote(documento.url, safe=":/?#[]@!$&'()*+,;=%-._~"),
+            "fecha-descarga-utc": fecha_descarga.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "sha256": hashlib.sha256(contenido).hexdigest(),
+            "correlation-id": CORRELATION_ID.get() or "",
+        },
     )
+    return respuesta.get("VersionId")
 
 
 def fecha_valida(texto: str) -> str:
@@ -172,11 +185,15 @@ class ScraperBestinver:
     def __init__(self, session: requests.Session, delay: float = 1.0) -> None:
         self.session = session
         self.delay = delay
-        self.fallos: list[tuple[str, str]] = []
+        self.fallos: list[Incidencia] = []
+        self.ausentes: list[Incidencia] = []
 
     def descubrir(self) -> list[Documento]:
         self.fallos.clear()
+        self.ausentes.clear()
         fondos = obtener_fondos(self.session)
+        if not fondos:
+            self.fallos.append(Incidencia("listado", "No se encontraron fondos", url=BASE_URL))
         informar(f"Encontrados {len(fondos)} fondos.\n")
         documentos = []
         for nombre, url in fondos:
@@ -187,22 +204,23 @@ class ScraperBestinver:
                 encontrados = obtener_documentos(self.session, url)
             except requests.RequestException as error:
                 informar(f"    [error] no se pudo abrir la página: {error}")
-                self.fallos.append((nombre, "página"))
+                self.fallos.append(Incidencia("pagina", str(error), fondo=nombre, url=url))
                 continue
             for sufijo, tipo in (("datos_fundamentales", "kid"), ("ficha_fondo", "ficha_fondo")):
                 if sufijo not in encontrados:
                     informar(f"    [sin documento] {sufijo}")
+                    self.ausentes.append(Incidencia("ausente", "Documento no encontrado", nombre, tipo, url))
                     continue
                 documentos.append(Documento("bestinver", slug, tipo, encontrados[sufijo], nombre))
         return documentos
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--bucket", default=BUCKET_POR_DEFECTO, help="Bucket de S3 de destino")
     parser.add_argument("--prefijo", default=PREFIJO_POR_DEFECTO, help="Carpeta raíz dentro del bucket")
     parser.add_argument(
-        "--fecha", type=fecha_valida, default=date.today().strftime("%Y%m%d"),
+        "--fecha", type=fecha_valida, default=None,
         help="Subcarpeta de fecha AAAAMMDD (por defecto, hoy)",
     )
     parser.add_argument("--delay", type=float, default=1.0, help="Segundos de espera entre peticiones")
@@ -213,57 +231,99 @@ def main() -> None:
         parser.error("El correlation-id debe ser ASCII imprimible y tener hasta 128 caracteres")
     token = CORRELATION_ID.set(correlation_id)
     try:
-        ejecutar(args)
+        resultado = ejecutar(args)
+        return 0 if resultado.estado == "completa" else 1
     finally:
         CORRELATION_ID.reset(token)
 
 
-def ejecutar(args: argparse.Namespace) -> None:
-    carpeta_s3 = f"{args.prefijo.strip('/')}/{args.fecha}"
+def ejecutar(args: argparse.Namespace) -> ResultadoIngesta:
+    resultado = ResultadoIngesta()
+    inicio = datetime.now(timezone.utc)
+    intento = str(uuid4())
+    fecha = args.fecha or datetime.now(ZoneInfo("Europe/Madrid")).strftime("%Y%m%d")
+    carpeta_s3 = f"raw/{args.prefijo.strip('/')}/{fecha}"
     s3 = boto3.client("s3")
     try:
         s3.head_bucket(Bucket=args.bucket)
+        if s3.get_bucket_versioning(Bucket=args.bucket).get("Status") != "Enabled":
+            resultado.fallos.append(Incidencia("versionado", "El bucket no tiene el versionado activado"))
+            informar("[error] el bucket no tiene el versionado activado")
+            return resultado
     except (BotoCoreError, ClientError) as e:
-        raise SystemExit(f"[error] no se puede acceder al bucket '{args.bucket}': {e}")
+        informar(f"[error] no se puede acceder al bucket '{args.bucket}': {e}")
+        resultado.fallos.append(Incidencia("bucket", str(e)))
+        return resultado
     informar(f"Destino: s3://{args.bucket}/{carpeta_s3}/\n")
 
     session = requests.Session()
     session.headers.update(HEADERS)
 
     scraper = ScraperBestinver(session, args.delay)
-    documentos = scraper.descubrir()
-    total, fallos = 0, list(scraper.fallos)
+    try:
+        documentos = scraper.descubrir()
+    except requests.RequestException as error:
+        informar(f"[error] no se pudo consultar el listado: {error}")
+        resultado.fallos.append(Incidencia("listado", str(error), url=BASE_URL))
+        documentos = []
+    resultado.fallos.extend(scraper.fallos)
+    resultado.ausentes.extend(scraper.ausentes)
     claves_vistas = set()
     for documento in documentos:
         nombre = documento.nombre_fondo
-        sufijo = "datos_fundamentales" if documento.tipo == "kid" else documento.tipo
+        sufijo = documento.tipo
         clave = f"{carpeta_s3}/{documento.slug}_{sufijo}.pdf"
         if clave in claves_vistas:
             informar(f"    [error] clave S3 duplicada: {clave}")
-            fallos.append((nombre, f"{sufijo} (clave duplicada)"))
+            resultado.fallos.append(Incidencia("clave_duplicada", clave, nombre, sufijo, documento.url))
             continue
         claves_vistas.add(clave)
         try:
             time.sleep(args.delay)
             contenido = descargar(session, documento.url)
+            fecha_descarga = datetime.now(timezone.utc)
         except (requests.RequestException, ValueError) as e:
             informar(f"    [error] descarga {sufijo}: {e}")
-            fallos.append((nombre, f"{sufijo} (descarga)"))
+            resultado.fallos.append(Incidencia("descarga", str(e), nombre, sufijo, documento.url))
             continue
         try:
-            subir_s3(s3, args.bucket, clave, contenido, documento.url)
+            version = subir_s3(s3, args.bucket, clave, contenido, documento, fecha_descarga)
             informar(f"    [ok] s3://{args.bucket}/{clave}")
-            total += 1
+            resultado.subidos.append(Subida(documento, args.bucket, clave, version, hashlib.sha256(contenido).hexdigest(), fecha_descarga.isoformat().replace("+00:00", "Z")))
+            if not version or version == "null":
+                resultado.fallos.append(Incidencia("version_s3", "Subida sin versionId; comprobar versionado del bucket", nombre, sufijo, documento.url, clave))
         except (BotoCoreError, ClientError) as e:
             informar(f"    [error] subida {sufijo}: {e}")
-            fallos.append((nombre, f"{sufijo} (subida S3)"))
+            resultado.fallos.append(Incidencia("subida_resultado_incierto", str(e), nombre, sufijo, documento.url, clave, hashlib.sha256(contenido).hexdigest()))
 
-    informar(f"\nSubidos {total} documentos a 's3://{args.bucket}/{carpeta_s3}/'.")
-    if fallos:
-        informar(f"Fallos ({len(fallos)}):")
-        for nombre, que in fallos:
-            informar(f"  - {nombre}: {que}")
+    manifiesto = {
+        "schema_version": "1.0",
+        "execution_id": CORRELATION_ID.get(),
+        "attempt_id": intento,
+        "gestora": "bestinver",
+        "inicio_utc": inicio.isoformat().replace("+00:00", "Z"),
+        "fin_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "estado": resultado.estado,
+        "contadores": {"subidos": len(resultado.subidos), "ausentes": len(resultado.ausentes), "fallos": len(resultado.fallos)},
+        "subidos": [asdict(subida) for subida in resultado.subidos],
+        "ausentes": [asdict(ausente) for ausente in resultado.ausentes],
+        "fallos": [asdict(fallo) for fallo in resultado.fallos],
+    }
+    identificador = CORRELATION_ID.get() or intento
+    clave_ejecucion = hashlib.sha256(identificador.encode("utf-8")).hexdigest()
+    clave_manifiesto = f"manifests/bestinver/{fecha}/{clave_ejecucion}/{intento}.json"
+    try:
+        s3.put_object(Bucket=args.bucket, Key=clave_manifiesto, Body=json.dumps(manifiesto, ensure_ascii=False).encode("utf-8"), ContentType="application/json")
+        informar(f"Manifiesto: s3://{args.bucket}/{clave_manifiesto}")
+    except (BotoCoreError, ClientError) as error:
+        informar(f"[error] no se pudo guardar el manifiesto: {error}")
+        resultado.fallos.append(Incidencia("manifiesto_resultado_incierto", str(error), clave=clave_manifiesto))
+    informar(f"\nSubidos {len(resultado.subidos)} documentos a 's3://{args.bucket}/{carpeta_s3}/'.")
+    informar(f"Estado: {resultado.estado}; fallos: {len(resultado.fallos)}")
+    for fallo in resultado.fallos:
+        informar(f"  - {fallo.etapa}: {fallo.mensaje}")
+    return resultado
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
