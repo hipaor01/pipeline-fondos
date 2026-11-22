@@ -36,6 +36,7 @@ uv run --group scraping python webscrapper/descargar_kids_bestinver.py --fecha 2
 uv run --group scraping python webscrapper/descargar_kids_bestinver.py --bucket otro-bucket
 uv run --group scraping python webscrapper/descargar_kids_bestinver.py --prefijo pruebas
 uv run --group scraping python webscrapper/descargar_kids_bestinver.py --delay 0.5
+uv run --group scraping python webscrapper/descargar_kids_bestinver.py --correlation-id mi-ejecucion
 ```
 
 ### Cómo se analizó la web
@@ -68,6 +69,13 @@ Las páginas son HTML estático (no necesitan JavaScript), así que basta con `r
 3. Comprueba al inicio que el bucket es accesible (si no, termina con error).
 4. Descarga cada PDF en memoria y lo sube a S3 con `ContentType: application/pdf` y la URL original en los metadatos (`x-amz-meta-url-origen`). Si se relanza el mismo día, los objetos se sobrescriben.
 5. Muestra un resumen con los documentos descargados y los fallos.
+
+Antes de la subida se comprueba la cabecera y se abre el PDF con `pypdf` para
+rechazar respuestas vacías, HTML o documentos que no se puedan leer. Si dos
+documentos de una ejecución generan la misma clave S3, se informa el conflicto
+y no se sobrescribe el primero.
+Cada ejecución genera un identificador de correlación, salvo que se facilite uno
+con `--correlation-id`; aparece en los mensajes y en los metadatos de S3.
 
 **Respaldo:** si un XPath deja de encontrar nada (porque cambie la maquetación de la web), el script usa un selector más general (enlaces del footer a `/fondos-de-inversion/` o enlaces a `.pdf` dentro de `<main>`) y muestra un aviso.
 

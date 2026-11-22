@@ -20,16 +20,27 @@ Uso:
 """
 
 import argparse
+import builtins
+import io
 import re
 import time
 import unicodedata
+from contextvars import ContextVar
 from datetime import date, datetime
 from urllib.parse import urljoin, urlparse
+from uuid import uuid4
 
 import boto3
 import requests
 from botocore.exceptions import BotoCoreError, ClientError
 from lxml import html
+from pypdf import PdfReader
+from pypdf.errors import PdfReadError
+
+if __package__:
+    from .base import Documento
+else:
+    from base import Documento
 
 BASE_URL = "https://www.bestinver.es/fondos-de-inversion/"
 
@@ -54,6 +65,16 @@ HEADERS = {
 }
 
 
+CORRELATION_ID: ContextVar[str | None] = ContextVar("correlation_id", default=None)
+
+
+def informar(mensaje: str) -> None:
+    correlation_id = CORRELATION_ID.get()
+    if correlation_id:
+        mensaje = "\n".join(f"[{correlation_id}] {linea}" if linea else "" for linea in mensaje.split("\n"))
+    builtins.print(mensaje)
+
+
 def normalizar(texto: str) -> str:
     """Minúsculas, sin acentos y con espacios colapsados."""
     texto = unicodedata.normalize("NFKD", texto)
@@ -75,7 +96,7 @@ def obtener_fondos(session: requests.Session) -> list[tuple[str, str]]:
         enlaces = listas[0].xpath(".//a[@href]")
     else:
         # Respaldo por si cambia la maquetación: enlaces del footer a /fondos-de-inversion/<slug>/
-        print("[aviso] XPath de la lista de fondos no encontrado, usando respaldo.")
+        informar("[aviso] XPath de la lista de fondos no encontrado, usando respaldo.")
         enlaces = arbol.xpath("//footer//a[contains(@href, '/fondos-de-inversion/')]")
 
     fondos, vistos = [], set()
@@ -100,7 +121,7 @@ def obtener_documentos(session: requests.Session, url_fondo: str) -> dict[str, s
         enlaces = listas[0].xpath(".//a[@href]")
     else:
         # Respaldo: cualquier enlace a PDF de la página
-        print("    [aviso] XPath de documentos no encontrado, usando respaldo.")
+        informar("    [aviso] XPath de documentos no encontrado, usando respaldo.")
         enlaces = arbol.xpath("//main//a[contains(@href, '.pdf')]")
 
     encontrados = {}
@@ -116,6 +137,13 @@ def descargar(session: requests.Session, url: str) -> bytes:
     """Descarga el PDF completo en memoria (son ficheros pequeños)."""
     resp = session.get(url, timeout=60)
     resp.raise_for_status()
+    if not resp.content.startswith(b"%PDF-"):
+        raise ValueError("La respuesta no empieza con una cabecera PDF válida.")
+    try:
+        if not PdfReader(io.BytesIO(resp.content), strict=True).pages:
+            raise ValueError("El PDF no contiene páginas.")
+    except (PdfReadError, OSError, ValueError) as error:
+        raise ValueError("La respuesta no contiene un PDF legible.") from error
     return resp.content
 
 
@@ -125,7 +153,7 @@ def subir_s3(s3, bucket: str, clave: str, contenido: bytes, url_origen: str) -> 
         Key=clave,
         Body=contenido,
         ContentType="application/pdf",
-        Metadata={"url-origen": url_origen},
+        Metadata={"url-origen": url_origen, "correlation-id": CORRELATION_ID.get() or ""},
     )
 
 
@@ -138,6 +166,37 @@ def fecha_valida(texto: str) -> str:
     return texto
 
 
+class ScraperBestinver:
+    """Descubre los documentos de Bestinver sin descargarlos ni subirlos."""
+
+    def __init__(self, session: requests.Session, delay: float = 1.0) -> None:
+        self.session = session
+        self.delay = delay
+        self.fallos: list[tuple[str, str]] = []
+
+    def descubrir(self) -> list[Documento]:
+        self.fallos.clear()
+        fondos = obtener_fondos(self.session)
+        informar(f"Encontrados {len(fondos)} fondos.\n")
+        documentos = []
+        for nombre, url in fondos:
+            slug = [p for p in urlparse(url).path.split("/") if p][-1]
+            informar(f"- {nombre} ({url})")
+            time.sleep(self.delay)
+            try:
+                encontrados = obtener_documentos(self.session, url)
+            except requests.RequestException as error:
+                informar(f"    [error] no se pudo abrir la página: {error}")
+                self.fallos.append((nombre, "página"))
+                continue
+            for sufijo, tipo in (("datos_fundamentales", "kid"), ("ficha_fondo", "ficha_fondo")):
+                if sufijo not in encontrados:
+                    informar(f"    [sin documento] {sufijo}")
+                    continue
+                documentos.append(Documento("bestinver", slug, tipo, encontrados[sufijo], nombre))
+        return documentos
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--bucket", default=BUCKET_POR_DEFECTO, help="Bucket de S3 de destino")
@@ -147,59 +206,63 @@ def main() -> None:
         help="Subcarpeta de fecha AAAAMMDD (por defecto, hoy)",
     )
     parser.add_argument("--delay", type=float, default=1.0, help="Segundos de espera entre peticiones")
+    parser.add_argument("--correlation-id", default=None, help="Identificador de la ejecución")
     args = parser.parse_args()
+    correlation_id = args.correlation_id or str(uuid4())
+    if len(correlation_id) > 128 or not correlation_id.isascii() or not correlation_id.isprintable():
+        parser.error("El correlation-id debe ser ASCII imprimible y tener hasta 128 caracteres")
+    token = CORRELATION_ID.set(correlation_id)
+    try:
+        ejecutar(args)
+    finally:
+        CORRELATION_ID.reset(token)
 
+
+def ejecutar(args: argparse.Namespace) -> None:
     carpeta_s3 = f"{args.prefijo.strip('/')}/{args.fecha}"
     s3 = boto3.client("s3")
     try:
         s3.head_bucket(Bucket=args.bucket)
     except (BotoCoreError, ClientError) as e:
         raise SystemExit(f"[error] no se puede acceder al bucket '{args.bucket}': {e}")
-    print(f"Destino: s3://{args.bucket}/{carpeta_s3}/\n")
+    informar(f"Destino: s3://{args.bucket}/{carpeta_s3}/\n")
 
     session = requests.Session()
     session.headers.update(HEADERS)
 
-    fondos = obtener_fondos(session)
-    print(f"Encontrados {len(fondos)} fondos.\n")
-
-    total, fallos = 0, []
-    for nombre, url in fondos:
-        slug = [p for p in urlparse(url).path.split("/") if p][-1]
-        print(f"- {nombre} ({url})")
-        time.sleep(args.delay)
-        try:
-            docs = obtener_documentos(session, url)
-        except requests.RequestException as e:
-            print(f"    [error] no se pudo abrir la página: {e}")
-            fallos.append((nombre, "página"))
+    scraper = ScraperBestinver(session, args.delay)
+    documentos = scraper.descubrir()
+    total, fallos = 0, list(scraper.fallos)
+    claves_vistas = set()
+    for documento in documentos:
+        nombre = documento.nombre_fondo
+        sufijo = "datos_fundamentales" if documento.tipo == "kid" else documento.tipo
+        clave = f"{carpeta_s3}/{documento.slug}_{sufijo}.pdf"
+        if clave in claves_vistas:
+            informar(f"    [error] clave S3 duplicada: {clave}")
+            fallos.append((nombre, f"{sufijo} (clave duplicada)"))
             continue
+        claves_vistas.add(clave)
+        try:
+            time.sleep(args.delay)
+            contenido = descargar(session, documento.url)
+        except (requests.RequestException, ValueError) as e:
+            informar(f"    [error] descarga {sufijo}: {e}")
+            fallos.append((nombre, f"{sufijo} (descarga)"))
+            continue
+        try:
+            subir_s3(s3, args.bucket, clave, contenido, documento.url)
+            informar(f"    [ok] s3://{args.bucket}/{clave}")
+            total += 1
+        except (BotoCoreError, ClientError) as e:
+            informar(f"    [error] subida {sufijo}: {e}")
+            fallos.append((nombre, f"{sufijo} (subida S3)"))
 
-        for sufijo in DOCUMENTOS_OBJETIVO.values():
-            if sufijo not in docs:
-                print(f"    [sin documento] {sufijo}")
-                continue
-            clave = f"{carpeta_s3}/{slug}_{sufijo}.pdf"
-            try:
-                time.sleep(args.delay)
-                contenido = descargar(session, docs[sufijo])
-            except requests.RequestException as e:
-                print(f"    [error] descarga {sufijo}: {e}")
-                fallos.append((nombre, f"{sufijo} (descarga)"))
-                continue
-            try:
-                subir_s3(s3, args.bucket, clave, contenido, docs[sufijo])
-                print(f"    [ok] s3://{args.bucket}/{clave}")
-                total += 1
-            except (BotoCoreError, ClientError) as e:
-                print(f"    [error] subida {sufijo}: {e}")
-                fallos.append((nombre, f"{sufijo} (subida S3)"))
-
-    print(f"\nSubidos {total} documentos a 's3://{args.bucket}/{carpeta_s3}/'.")
+    informar(f"\nSubidos {total} documentos a 's3://{args.bucket}/{carpeta_s3}/'.")
     if fallos:
-        print(f"Fallos ({len(fallos)}):")
+        informar(f"Fallos ({len(fallos)}):")
         for nombre, que in fallos:
-            print(f"  - {nombre}: {que}")
+            informar(f"  - {nombre}: {que}")
 
 
 if __name__ == "__main__":
