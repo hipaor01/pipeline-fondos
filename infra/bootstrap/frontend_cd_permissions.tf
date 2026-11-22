@@ -163,6 +163,23 @@ data "aws_iam_policy_document" "github_actions_frontend" {
     ]
     resources = ["*"]
   }
+
+  statement {
+    sid    = "ReadFrontendServiceDeployments"
+    effect = "Allow"
+
+    actions = [
+      "ecs:ListServiceDeployments",
+      "ecs:DescribeServiceDeployments",
+      "ecs:DescribeServiceRevisions",
+    ]
+
+    resources = [
+      local.frontend_service_arn,
+      local.frontend_service_deployment_arn,
+      local.frontend_service_revision_arn,
+    ]
+  }
 }
 
 resource "aws_iam_policy" "github_actions_frontend" {
