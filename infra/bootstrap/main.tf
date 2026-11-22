@@ -12,10 +12,13 @@ locals {
   )
 
   frontend_repository_name = "${var.project_name}-${var.deployment_environment}-frontend"
+  frontend_service_name    = "${var.project_name}-${var.deployment_environment}-frontend"
 
-  cd_role_name               = "${var.project_name}-${var.deployment_environment}-github-deploy"
-  lambda_execution_role_name = "${var.project_name}-${var.deployment_environment}-api-exec"
-  lambda_boundary_name       = "${var.project_name}-${var.deployment_environment}-lambda-boundary"
+  cd_role_name                      = "${var.project_name}-${var.deployment_environment}-github-deploy"
+  lambda_execution_role_name        = "${var.project_name}-${var.deployment_environment}-api-exec"
+  lambda_boundary_name              = "${var.project_name}-${var.deployment_environment}-lambda-boundary"
+  frontend_task_execution_role_name = "${local.frontend_service_name}-task-execution"
+  frontend_infrastructure_role_name = "${local.frontend_service_name}-infrastructure"
 
   common_tags = merge(
     var.additional_tags,

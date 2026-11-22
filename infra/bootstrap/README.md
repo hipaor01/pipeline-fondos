@@ -52,12 +52,14 @@ La relación de confianza del rol exige:
 - la rama exacta `main`.
 
 El rol puede administrar el bucket de artefactos reservado, el estado de los
-roots `dev`, el repositorio ECR del frontend, la Lambda, su rol de ejecución,
-sus logs y las HTTP APIs de la región. Los permisos de ECR están limitados al
-repositorio `pipeline-fondos-dev-frontend`, incluida la publicación de imágenes.
-El rol no puede modificar su propia política. API Gateway no permite delimitar
-la creación inicial por nombre, por lo que sus acciones se limitan al servicio
-API Gateway de `eu-west-3`, pero no a un ID que todavía no existe.
+roots `dev`, el repositorio ECR y el servicio ECS Express del frontend, la
+Lambda, su rol de ejecución, sus logs y las HTTP APIs de la región. Los permisos
+de ECR están limitados al repositorio `pipeline-fondos-dev-frontend`, incluida
+la publicación de imágenes. Los roles que puede crear para ECS tienen nombres
+y políticas administradas explícitamente delimitados. El rol no puede modificar
+su propia política. API Gateway no permite delimitar la creación inicial por
+nombre, por lo que sus acciones se limitan al servicio API Gateway de
+`eu-west-3`, pero no a un ID que todavía no existe.
 
 La pipeline solo puede crear el rol de ejecución de Lambda si adjunta la
 permissions boundary gestionada por este bootstrap. Aunque pueda modificar la

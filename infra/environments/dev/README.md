@@ -15,9 +15,10 @@ El workflow `.github/workflows/deploy-api-dev.yml` se encarga de:
 - aplicar la infraestructura de la API y comprobar `/health`.
 
 El frontend usa el root separado `dev/frontend` y el workflow
-`.github/workflows/publish-frontend-dev.yml`. Este crea el repositorio ECR y
-publica una imagen Linux ARM64 inmutable por commit. El estado separado evita
-que la publicación del frontend bloquee o modifique el estado de la API.
+`.github/workflows/publish-frontend-dev.yml`. Este crea el repositorio ECR,
+publica una imagen Linux ARM64 inmutable por commit y aplica el root
+`dev/frontend-service` para desplegar su digest en ECS Express Mode. Los estados
+separados evitan ciclos entre el registro, la imagen y el servicio.
 
 La pipeline necesita que `infra/bootstrap` esté aplicado y que la variable de
 repositorio `AWS_DEPLOY_ROLE_ARN` contenga el output

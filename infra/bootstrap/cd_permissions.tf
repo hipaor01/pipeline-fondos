@@ -2,7 +2,11 @@ locals {
   deployment_state_keys = [
     "${var.project_name}/${var.deployment_environment}/terraform.tfstate",
     "${var.project_name}/${var.deployment_environment}/artifacts/terraform.tfstate",
+  ]
+
+  frontend_state_keys = [
     "${var.project_name}/${var.deployment_environment}/frontend/terraform.tfstate",
+    "${var.project_name}/${var.deployment_environment}/frontend-service/terraform.tfstate",
   ]
 
   deployment_state_object_arns = flatten([
@@ -16,15 +20,34 @@ locals {
     for key in local.deployment_state_keys : "${aws_s3_bucket.terraform_state.arn}/${key}.tflock"
   ]
 
-  lambda_function_arn     = "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:${var.project_name}-${var.deployment_environment}-api"
-  lambda_role_arn         = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.lambda_execution_role_name}"
-  frontend_repository_arn = "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/${local.frontend_repository_name}"
+  frontend_state_object_arns = flatten([
+    for key in local.frontend_state_keys : [
+      "${aws_s3_bucket.terraform_state.arn}/${key}",
+      "${aws_s3_bucket.terraform_state.arn}/${key}.tflock",
+    ]
+  ])
+
+  frontend_lock_object_arns = [
+    for key in local.frontend_state_keys : "${aws_s3_bucket.terraform_state.arn}/${key}.tflock"
+  ]
+
+  lambda_function_arn              = "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:${var.project_name}-${var.deployment_environment}-api"
+  lambda_role_arn                  = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.lambda_execution_role_name}"
+  frontend_repository_arn          = "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/${local.frontend_repository_name}"
+  frontend_task_execution_role_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.frontend_task_execution_role_name}"
+  frontend_infrastructure_role_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.frontend_infrastructure_role_name}"
+  frontend_service_arn             = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/default/${local.frontend_service_name}"
 
   log_group_arns = [
     "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-${var.deployment_environment}-api",
     "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-${var.deployment_environment}-api:*",
     "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/apigateway/${var.project_name}-${var.deployment_environment}-http-api",
     "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/apigateway/${var.project_name}-${var.deployment_environment}-http-api:*",
+  ]
+
+  frontend_log_group_arns = [
+    "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/ecs/${local.frontend_service_name}",
+    "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/ecs/${local.frontend_service_name}:*",
   ]
 }
 
@@ -175,47 +198,6 @@ data "aws_iam_policy_document" "github_actions_cd" {
     sid       = "DiscoverApiLogGroups"
     effect    = "Allow"
     actions   = ["logs:DescribeLogGroups"]
-    resources = ["*"]
-  }
-
-  statement {
-    sid    = "ManageFrontendRepository"
-    effect = "Allow"
-    actions = [
-      "ecr:CreateRepository",
-      "ecr:DeleteLifecyclePolicy",
-      "ecr:DeleteRepository",
-      "ecr:DescribeImages",
-      "ecr:DescribeRepositories",
-      "ecr:GetLifecyclePolicy",
-      "ecr:ListTagsForResource",
-      "ecr:PutImageScanningConfiguration",
-      "ecr:PutImageTagMutability",
-      "ecr:PutLifecyclePolicy",
-      "ecr:TagResource",
-      "ecr:UntagResource",
-    ]
-    resources = [local.frontend_repository_arn]
-  }
-
-  statement {
-    sid    = "PushFrontendImages"
-    effect = "Allow"
-    actions = [
-      "ecr:BatchCheckLayerAvailability",
-      "ecr:BatchGetImage",
-      "ecr:CompleteLayerUpload",
-      "ecr:InitiateLayerUpload",
-      "ecr:PutImage",
-      "ecr:UploadLayerPart",
-    ]
-    resources = [local.frontend_repository_arn]
-  }
-
-  statement {
-    sid       = "AuthenticateWithEcr"
-    effect    = "Allow"
-    actions   = ["ecr:GetAuthorizationToken"]
     resources = ["*"]
   }
 
