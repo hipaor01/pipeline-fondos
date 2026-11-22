@@ -202,7 +202,8 @@ a `main`, utiliza un runner ARM64 nativo para:
 - crear o actualizar el repositorio privado `pipeline-fondos-dev-frontend`;
 - construir la imagen para `linux/arm64`;
 - etiquetarla con el SHA completo e inmutable del commit;
-- publicarla en ECR y registrar su digest en el resumen de la ejecución.
+- publicarla en ECR;
+- desplegar ese digest en ECS Express Mode y comprobar su endpoint público.
 
 Antes de la primera ejecución hay que volver a aplicar `infra/bootstrap` para
 ampliar los permisos del rol OIDC al nuevo estado y al repositorio ECR:
@@ -218,6 +219,19 @@ Las etiquetas del repositorio son inmutables, las imágenes se escanean al
 publicarse y una política de ciclo de vida conserva únicamente las 30 más
 recientes. Si se reejecuta la pipeline para un SHA ya publicado, reutiliza esa
 imagen en lugar de intentar sobrescribirla.
+
+### Despliegue en ECS Express Mode
+
+El servicio se gestiona desde `infra/environments/dev/frontend-service`, con un
+estado independiente del repositorio ECR. Utiliza Linux ARM64 sobre Graviton,
+0,5 vCPU y 1 GiB de memoria por tarea, y escala entre una y dos tareas según el
+uso medio de CPU. ECS Express administra el balanceador, TLS, red y endpoint
+público sobre la VPC predeterminada de `eu-west-3`.
+
+Streamlit escucha en el puerto `8501`; el balanceador consulta
+`/_stcore/health`. La variable `API_BASE_URL` se obtiene del estado Terraform de
+la API y los logs se conservan 14 días en CloudWatch. Cada despliegue utiliza la
+imagen por digest, nunca una etiqueta mutable.
 
 En AWS Lambda, el adaptador Mangum expone la misma aplicación mediante el
 handler `api.lambda_handler.handler`. Está configurado para eventos de API

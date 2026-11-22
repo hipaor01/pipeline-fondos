@@ -10,7 +10,9 @@ on:
       - "frontend/**"
       - "infra/bootstrap/**"
       - "infra/environments/dev/frontend/**"
+      - "infra/environments/dev/frontend-service/**"
       - "infra/modules/container_registry/**"
+      - "infra/modules/frontend_service/**"
       - "pyproject.toml"
       - "tests/frontend/**"
       - "uv.lock"
@@ -24,7 +26,9 @@ on:
       - "frontend/**"
       - "infra/bootstrap/**"
       - "infra/environments/dev/frontend/**"
+      - "infra/environments/dev/frontend-service/**"
       - "infra/modules/container_registry/**"
+      - "infra/modules/frontend_service/**"
       - "pyproject.toml"
       - "tests/frontend/**"
       - "uv.lock"
@@ -92,11 +96,16 @@ jobs:
           terraform -chdir=infra/environments/dev/frontend init -backend=false -input=false
           terraform -chdir=infra/environments/dev/frontend validate
 
+      - name: Validate ECS Express infrastructure
+        run: |
+          terraform -chdir=infra/environments/dev/frontend-service init -backend=false -input=false
+          terraform -chdir=infra/environments/dev/frontend-service validate
+
   container:
-    name: Build and publish ARM64 image
+    name: Build and deploy ARM64 frontend
     needs: quality
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
+    timeout-minutes: 60
     concurrency:
       group: publish-frontend-dev
       cancel-in-progress: false
@@ -235,12 +244,56 @@ jobs:
 
           echo "digest=${image_digest}" >> "${GITHUB_OUTPUT}"
 
-      - name: Publication summary
+      - name: Deploy ECS Express service
+        if: github.ref == 'refs/heads/main'
+        id: service
+        env:
+          ECR_REPOSITORY_URL: ${{ steps.registry.outputs.repository_url }}
+          IMAGE_DIGEST: ${{ steps.published.outputs.digest }}
+        run: |
+          frontend_image="${ECR_REPOSITORY_URL}@${IMAGE_DIGEST}"
+
+          terraform -chdir=infra/environments/dev/frontend-service init \
+            -input=false \
+            -backend-config="bucket=${TF_STATE_BUCKET}"
+          terraform -chdir=infra/environments/dev/frontend-service plan \
+            -input=false \
+            -var="frontend_image=${frontend_image}" \
+            -out=tfplan
+          terraform -chdir=infra/environments/dev/frontend-service apply \
+            -input=false \
+            tfplan
+
+          service_endpoint=$(terraform -chdir=infra/environments/dev/frontend-service output -raw service_endpoint)
+          service_arn=$(terraform -chdir=infra/environments/dev/frontend-service output -raw service_arn)
+
+          {
+            echo "endpoint=${service_endpoint}"
+            echo "service_arn=${service_arn}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Smoke-test Streamlit
+        if: github.ref == 'refs/heads/main'
+        env:
+          SERVICE_ENDPOINT: ${{ steps.service.outputs.endpoint }}
+        run: |
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --retry 20 \
+            --retry-all-errors \
+            --retry-delay 5 \
+            "${SERVICE_ENDPOINT%/}/_stcore/health"
+
+      - name: Deployment summary
         if: github.ref == 'refs/heads/main'
         env:
           ECR_REPOSITORY_URL: ${{ steps.registry.outputs.repository_url }}
           IMAGE_ALREADY_EXISTED: ${{ steps.image.outputs.exists }}
           IMAGE_DIGEST: ${{ steps.published.outputs.digest }}
+          SERVICE_ARN: ${{ steps.service.outputs.service_arn }}
+          SERVICE_ENDPOINT: ${{ steps.service.outputs.endpoint }}
         run: |
           {
             echo "## Frontend ARM64 image"
@@ -249,4 +302,6 @@ jobs:
             echo "- Digest: ${IMAGE_DIGEST}"
             echo "- Already existed: ${IMAGE_ALREADY_EXISTED}"
             echo "- Platform: linux/arm64"
+            echo "- ECS service: ${SERVICE_ARN}"
+            echo "- Endpoint: ${SERVICE_ENDPOINT}"
           } >> "${GITHUB_STEP_SUMMARY}"
