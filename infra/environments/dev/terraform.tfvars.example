@@ -1,0 +1,19 @@
+aws_region   = "eu-west-3"
+project_name = "pipeline-fondos"
+
+# Sustituye estos valores por el artefacto generado por el proceso de build.
+lambda_package = {
+  s3_bucket        = "REPLACE_WITH_ARTIFACT_BUCKET"
+  s3_key           = "api/REPLACE_WITH_COMMIT_SHA.zip"
+  source_code_hash = "REPLACE_WITH_BASE64_SHA256"
+}
+
+cors_allowed_origins = [
+  "http://localhost:3000",
+]
+
+lambda_environment_variables = {}
+
+additional_tags = {
+  Owner = "higinio"
+}

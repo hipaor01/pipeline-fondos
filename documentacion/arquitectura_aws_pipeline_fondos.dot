@@ -1,0 +1,379 @@
+digraph pipeline_fondos {
+  graph [
+    layout=neato,
+    outputorder=nodesfirst,
+    overlap=true,
+    splines=ortho,
+    bgcolor="#FFFFFF",
+    pad=0.25,
+    fontname="Arial",
+    fontsize=25,
+    labelloc=t,
+    labeljust=l,
+    label="Infraestructura AWS propuesta — pipeline-fondos"
+  ];
+
+  node [
+    shape=box,
+    style="rounded,filled",
+    fixedsize=true,
+    width=2.25,
+    height=0.82,
+    fontname="Arial",
+    fontsize=10,
+    color="#4B5563",
+    penwidth=1.3
+  ];
+
+  edge [
+    fontname="Arial",
+    fontsize=8.5,
+    color="#4B5563",
+    fontcolor="#374151",
+    penwidth=1.35,
+    arrowsize=0.75
+  ];
+
+  canvas_tl [pos="0,900!", shape=point, width=0.01, label="", style=invis];
+  canvas_br [pos="1640,0!", shape=point, width=0.01, label="", style=invis];
+
+  aws_bg [
+    pos="935,430!",
+    label="",
+    shape=box,
+    style="rounded,filled",
+    fixedsize=true,
+    width=20.4,
+    height=10.6,
+    fillcolor="#FCFDFE",
+    color="#232F3E",
+    penwidth=2.0
+  ];
+
+  capture_bg [pos="975,745!", label="", width=18.6, height=2.25, fillcolor="#F7F3FF", color="#C9B5F4"];
+  pipeline_bg [pos="925,455!", label="", width=19.5, height=3.25, fillcolor="#FFF4F9", color="#F0A7CA"];
+  serving_bg [pos="900,270!", label="", width=18.0, height=1.8, fillcolor="#FFF8EF", color="#F0B36E"];
+  platform_bg [pos="900,95!", label="", width=18.4, height=1.6, fillcolor="#F5F6F8", color="#BBC2CC"];
+
+  aws_label [pos="355,825!", label="AWS Cloud · región eu-west-3 (Paris)", shape=plaintext, fixedsize=false, style="", width=0, height=0, fontsize=13];
+  capture_label [pos="395,800!", label="1 · CAPTURA PROGRAMADA Y PARALELA", shape=plaintext, fixedsize=false, style="", width=0, height=0, fontsize=10, fontcolor="#59308A"];
+  pipeline_label [pos="410,555!", label="2 · PROCESAMIENTO ASÍNCRONO, REINTENTABLE E IDEMPOTENTE", shape=plaintext, fixedsize=false, style="", width=0, height=0, fontsize=10, fontcolor="#8A1C5A"];
+  serving_label [pos="350,315!", label="3 · API Y VISUALIZACIÓN", shape=plaintext, fixedsize=false, style="", width=0, height=0, fontsize=10, fontcolor="#8A5A00"];
+  platform_label [pos="400,135!", label="4 · DESPLIEGUE, SEGURIDAD Y OPERACIÓN", shape=plaintext, fixedsize=false, style="", width=0, height=0, fontsize=10, fontcolor="#4B5563"];
+
+  websites [
+    pos="930,850!",
+    label="Webs públicas\nBestinver · Azvalor · Cobas AM",
+    shape=folder,
+    width=2.35,
+    fillcolor="#FFFFFF"
+  ];
+
+  usuario [
+    pos="130,270!",
+    label="Usuario",
+    shape=ellipse,
+    width=1.9,
+    height=0.62,
+    fillcolor="#FFFFFF"
+  ];
+
+  subgraph cluster_aws {
+    label="AWS Cloud — región eu-west-3 (Paris)";
+    labelloc=t;
+    labeljust=l;
+    fontsize=15;
+    color="#232F3E";
+    penwidth=2.0;
+    style="rounded";
+    bgcolor="#FCFDFE";
+    margin=22;
+
+    subgraph cluster_capture {
+      label="1 · CAPTURA PROGRAMADA Y PARALELA";
+      labelloc=t;
+      labeljust=l;
+      fontsize=11;
+      color="#C9B5F4";
+      penwidth=1.5;
+      style="rounded,filled";
+      fillcolor="#F7F3FF";
+      margin=18;
+
+      scheduler [
+        pos="365,745!",
+        label="Amazon EventBridge Scheduler\ncron diario · Europe/Madrid\n+ ejecución manual",
+        fillcolor="#8C4FFF",
+        fontcolor="#FFFFFF",
+        color="#6B35CC"
+      ];
+
+      stepfunctions [
+        pos="625,745!",
+        label="AWS Step Functions (Standard)\nParallel · Retry · Catch\ntrazabilidad por ejecución",
+        fillcolor="#D45BCE",
+        fontcolor="#FFFFFF",
+        color="#A83FA3"
+      ];
+
+      scrapers [
+        pos="930,745!",
+        label="Lambdas de scraping\nλ Bestinver · λ Azvalor · λ Cobas AM\nimagen ECR común + adaptadores",
+        width=2.65,
+        fillcolor="#FF9900",
+        fontcolor="#18212F",
+        color="#D77F00"
+      ];
+
+      playwright_note [
+        pos="930,675!",
+        label="Excepción: imagen ECR independiente\nsi una gestora requiere Playwright",
+        shape=note,
+        width=3.0,
+        height=0.5,
+        fontsize=8.5,
+        fillcolor="#FFFFFF",
+        color="#D77F00",
+        fontcolor="#6B3F00"
+      ];
+
+      s3_raw [
+        pos="1280,745!",
+        label="Amazon S3 · RAW\ns3://curso-miax-pipeline-fondos\nraw/{gestora}/{AAAAMMDD}/*.pdf\nmetadatos + sha256",
+        shape=cylinder,
+        width=2.55,
+        height=1.0,
+        fillcolor="#3F8624",
+        fontcolor="#FFFFFF",
+        color="#2C6517"
+      ];
+    }
+
+    subgraph cluster_pipeline {
+      label="2 · PROCESAMIENTO ASÍNCRONO, REINTENTABLE E IDEMPOTENTE";
+      labelloc=t;
+      labeljust=l;
+      fontsize=11;
+      color="#F0A7CA";
+      penwidth=1.5;
+      style="rounded,filled";
+      fillcolor="#FFF4F9";
+      margin=18;
+
+      pdf_queue [
+        pos="330,500!",
+        label="Amazon SQS\npdf-a-markdown\nbatch=1 + reintentos",
+        fillcolor="#E7157B",
+        fontcolor="#FFFFFF",
+        color="#B70E5E"
+      ];
+
+      pdf_lambda [
+        pos="560,500!",
+        label="λ PDF → Markdown\nPyMuPDF + RapidOCR\ncontenedor ECR",
+        fillcolor="#FF9900",
+        fontcolor="#18212F",
+        color="#D77F00"
+      ];
+
+      s3_md [
+        pos="790,500!",
+        label="S3 · MARKDOWN\nprocessed/markdown/{gestora}/\n{AAAAMMDD}/*.md",
+        shape=cylinder,
+        fillcolor="#3F8624",
+        fontcolor="#FFFFFF",
+        color="#2C6517"
+      ];
+
+      md_queue [
+        pos="1020,500!",
+        label="Amazon SQS\nmarkdown-a-datos\nbatch=1 + concurrencia limitada",
+        fillcolor="#E7157B",
+        fontcolor="#FFFFFF",
+        color="#B70E5E"
+      ];
+
+      extract_lambda [
+        pos="1250,500!",
+        label="λ Markdown → datos\nJSON Schema + evidencia\nvalidación e idempotencia",
+        fillcolor="#FF9900",
+        fontcolor="#18212F",
+        color="#D77F00"
+      ];
+
+      bedrock [
+        pos="1115,380!",
+        label="Amazon Bedrock\nConverse API\nsalida estructurada",
+        width=1.95,
+        fillcolor="#8C4FFF",
+        fontcolor="#FFFFFF",
+        color="#6B35CC"
+      ];
+
+      s3_json [
+        pos="1325,380!",
+        label="S3 · AUDITORÍA\nprocessed/structured/*.json\n+ estado de validación",
+        shape=cylinder,
+        width=2.0,
+        fillcolor="#3F8624",
+        fontcolor="#FFFFFF",
+        color="#2C6517"
+      ];
+
+      aurora [
+        pos="1480,270!",
+        label="Aurora PostgreSQL Serverless v2\nRDS Data API · upsert\nUNIQUE sha256 / ISIN+fecha\nsolo evidencia válida",
+        shape=cylinder,
+        width=2.45,
+        height=1.0,
+        fillcolor="#527FFF",
+        fontcolor="#FFFFFF",
+        color="#315FD2"
+      ];
+    }
+
+    subgraph cluster_serving {
+      label="3 · API Y VISUALIZACIÓN";
+      labelloc=t;
+      labeljust=l;
+      fontsize=11;
+      color="#F0B36E";
+      penwidth=1.5;
+      style="rounded,filled";
+      fillcolor="#FFF8EF";
+      margin=18;
+
+      ecs [
+        pos="365,270!",
+        label="Amazon ECS Express Mode\nStreamlit en Fargate\nHTTPS · ALB · autoscaling",
+        fillcolor="#FF9900",
+        fontcolor="#18212F",
+        color="#D77F00"
+      ];
+
+      api_gateway [
+        pos="625,270!",
+        label="Amazon API Gateway\nHTTP API · HTTPS\nthrottling + CORS",
+        fillcolor="#E7157B",
+        fontcolor="#FFFFFF",
+        color="#B70E5E"
+      ];
+
+      api_lambda [
+        pos="885,270!",
+        label="λ FastAPI + Mangum\n/gestoras · /fondos · /clases\n/versiones-kid",
+        fillcolor="#FF9900",
+        fontcolor="#18212F",
+        color="#D77F00"
+      ];
+
+      secrets [
+        pos="1115,195!",
+        label="AWS Secrets Manager\ncredencial de base de datos",
+        width=2.0,
+        fillcolor="#D7325F",
+        fontcolor="#FFFFFF",
+        color="#A91F44"
+      ];
+    }
+
+    subgraph cluster_platform {
+      label="4 · DESPLIEGUE, SEGURIDAD Y OPERACIÓN";
+      labelloc=t;
+      labeljust=l;
+      fontsize=11;
+      color="#BBC2CC";
+      penwidth=1.5;
+      style="rounded,filled";
+      fillcolor="#F5F6F8";
+      margin=18;
+
+      cicd [
+        pos="320,95!",
+        label="GitHub Actions + OIDC\nsin claves AWS persistentes",
+        width=2.15,
+        fillcolor="#24292F",
+        fontcolor="#FFFFFF",
+        color="#24292F"
+      ];
+
+      terraform [
+        pos="560,95!",
+        label="Terraform\nIAM mínimo privilegio\nestado S3 + lockfile",
+        width=2.1,
+        fillcolor="#7B42BC",
+        fontcolor="#FFFFFF",
+        color="#59308A"
+      ];
+
+      ecr [
+        pos="790,95!",
+        label="Amazon ECR · GitHub build/push\nscrapers · OCR · extractor\nAPI · Streamlit",
+        width=2.35,
+        fillcolor="#FF9900",
+        fontcolor="#18212F",
+        color="#D77F00"
+      ];
+
+      dlq [
+        pos="1010,95!",
+        label="SQS DLQ de ambas colas\nfallos aislados y reprocesables",
+        width=1.95,
+        fillcolor="#8A1C5A",
+        fontcolor="#FFFFFF",
+        color="#64103F"
+      ];
+
+      cloudwatch [
+        pos="1230,95!",
+        label="Amazon CloudWatch\nlogs · métricas · alarmas",
+        width=1.95,
+        fillcolor="#5F6B7A",
+        fontcolor="#FFFFFF",
+        color="#3D4652"
+      ];
+
+      security [
+        pos="1460,95!",
+        label="S3 privado, cifrado y versionado\nIAM por función\nlímites de concurrencia",
+        shape=note,
+        width=2.15,
+        fillcolor="#FFFFFF",
+        color="#9CA3AF"
+      ];
+    }
+  }
+
+  raw_down [pos="1280,610!", shape=point, width=0.01, label="", style=invis];
+  pdf_across [pos="330,610!", shape=point, width=0.01, label="", style=invis];
+  upsert_right [pos="1600,500!", shape=point, width=0.01, label="", style=invis];
+  upsert_down [pos="1600,270!", shape=point, width=0.01, label="", style=invis];
+
+  websites -> scrapers [label="HTTPS respetuoso"];
+  scheduler -> stepfunctions [label="inicia"];
+  stepfunctions -> scrapers [label="Parallel"];
+  scrapers -> s3_raw [label="PutObject"];
+  scrapers -> playwright_note [style=dashed, arrowhead=none, color="#A96700"];
+
+  s3_raw -> raw_down [arrowhead=none];
+  raw_down -> pdf_across [arrowhead=none, label="evento S3: raw/ + .pdf"];
+  pdf_across -> pdf_queue;
+  pdf_queue -> pdf_lambda [label="poll"];
+  pdf_lambda -> s3_md [label="PutObject .md"];
+  s3_md -> md_queue [label="evento .md"];
+  md_queue -> extract_lambda [label="poll"];
+  extract_lambda -> bedrock [dir=both, label="Converse / JSON"];
+  extract_lambda -> s3_json [label="auditoría siempre"];
+  extract_lambda -> upsert_right [arrowhead=none, label="upsert si valida"];
+  upsert_right -> upsert_down [arrowhead=none];
+  upsert_down -> aurora;
+
+  usuario -> ecs [label="HTTPS"];
+  ecs -> api_gateway [label="consulta"];
+  api_gateway -> api_lambda [label="proxy"];
+  api_lambda -> aurora [label="RDS Data API"];
+  secrets -> api_lambda [style=dashed, label="secreto"];
+
+  cicd -> terraform [style=dashed, label="plan/apply"];
+  dlq -> cloudwatch [style=dashed, label="alarma"];
+}

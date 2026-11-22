@@ -1,0 +1,16 @@
+# Los valores por defecto sirven para este proyecto. Este archivo muestra cómo
+# sobrescribirlos sin guardar configuración local en el repositorio.
+aws_region  = "eu-west-3"
+project_name = "pipeline-fondos"
+
+# Normalmente no hace falta definirlo: por defecto se añade el ID de la cuenta.
+# state_bucket_name = "pipeline-fondos-terraform-state-123456789012"
+# artifact_bucket_name = "pipeline-fondos-artifacts-123456789012"
+
+# El repositorio actual usa subjects inmutables y despliega únicamente desde main.
+github_oidc_subject = "repo:hipaor01@54775548/pipeline-fondos@1465066430:ref:refs/heads/main"
+deployment_environment = "dev"
+
+additional_tags = {
+  Owner = "higinio"
+}

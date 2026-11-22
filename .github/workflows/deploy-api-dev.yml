@@ -1,0 +1,241 @@
+name: Deploy API to dev
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/deploy-api-dev.yml"
+      - "api/**"
+      - "infra/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "uv.lock"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/deploy-api-dev.yml"
+      - "api/**"
+      - "infra/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "uv.lock"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AWS_ACCOUNT_ID: "065451207233"
+  AWS_REGION: eu-west-3
+  TF_STATE_BUCKET: pipeline-fondos-terraform-state-065451207233
+  TERRAFORM_VERSION: "1.15.8"
+  UV_VERSION: "0.13.7"
+
+jobs:
+  quality:
+    name: Test and validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install 3.14
+
+      - name: Install development dependencies
+        run: uv sync --group dev --locked
+
+      - name: Lint Python
+        run: uv run --group dev ruff check api tests
+
+      - name: Type-check API
+        run: uv run --group dev mypy
+
+      - name: Run tests
+        run: uv run --group dev pytest -q
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Check Terraform formatting
+        run: terraform fmt -check -recursive infra
+
+  deploy:
+    name: Package and deploy
+    if: github.ref == 'refs/heads/main'
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: deploy-api-dev
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Require deployment role variable
+        env:
+          AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          if [ -z "${AWS_DEPLOY_ROLE_ARN}" ]; then
+            echo "Repository variable AWS_DEPLOY_ROLE_ARN is required" >&2
+            exit 1
+          fi
+
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install 3.14
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials through OIDC
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: pipeline-fondos-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
+          mask-aws-account-id: true
+
+      - name: Provision artifact bucket
+        id: artifacts
+        run: |
+          terraform -chdir=infra/environments/dev/artifacts init \
+            -input=false \
+            -backend-config="bucket=${TF_STATE_BUCKET}"
+          terraform -chdir=infra/environments/dev/artifacts plan \
+            -input=false \
+            -out=tfplan
+          terraform -chdir=infra/environments/dev/artifacts apply \
+            -input=false \
+            tfplan
+
+          artifact_bucket=$(terraform -chdir=infra/environments/dev/artifacts output -raw artifact_bucket_name)
+          echo "bucket=${artifact_bucket}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build and upload Lambda ZIP
+        id: package
+        env:
+          ARTIFACT_BUCKET: ${{ steps.artifacts.outputs.bucket }}
+        run: |
+          mkdir -p build/lambda
+
+          uv export \
+            --only-group api \
+            --no-emit-project \
+            --locked \
+            --output-file build/requirements-api.txt
+
+          uv pip install \
+            --no-installer-metadata \
+            --no-compile-bytecode \
+            --only-binary :all: \
+            --python-platform x86_64-manylinux2014 \
+            --python 3.14 \
+            --target build/lambda \
+            --requirements build/requirements-api.txt
+
+          rm -f build/lambda/.lock
+          cp -R api build/lambda/api
+          (cd build/lambda && zip -X -q -r ../api.zip .)
+          zip -T build/api.zip
+
+          uncompressed_bytes=$(du -sb build/lambda | cut -f1)
+          if [ "${uncompressed_bytes}" -gt 262144000 ]; then
+            echo "Lambda package exceeds the 250 MB uncompressed limit" >&2
+            exit 1
+          fi
+
+          source_code_hash=$(openssl dgst -sha256 -binary build/api.zip | openssl base64 -A)
+          artifact_key="api/${GITHUB_SHA}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.zip"
+          artifact_version=$(aws s3api put-object \
+            --bucket "${ARTIFACT_BUCKET}" \
+            --key "${artifact_key}" \
+            --body build/api.zip \
+            --query VersionId \
+            --output text)
+
+          if [ -z "${artifact_version}" ] || [ "${artifact_version}" = "None" ]; then
+            echo "S3 did not return an object version" >&2
+            exit 1
+          fi
+
+          lambda_package=$(jq -cn \
+            --arg bucket "${ARTIFACT_BUCKET}" \
+            --arg key "${artifact_key}" \
+            --arg version "${artifact_version}" \
+            --arg hash "${source_code_hash}" \
+            '{s3_bucket: $bucket, s3_key: $key, s3_object_version: $version, source_code_hash: $hash}')
+
+          echo "lambda_package=${lambda_package}" >> "${GITHUB_OUTPUT}"
+          echo "artifact_key=${artifact_key}" >> "${GITHUB_OUTPUT}"
+
+      - name: Deploy API infrastructure
+        id: api
+        env:
+          TF_VAR_lambda_package: ${{ steps.package.outputs.lambda_package }}
+        run: |
+          terraform -chdir=infra/environments/dev init \
+            -input=false \
+            -backend-config="bucket=${TF_STATE_BUCKET}"
+          terraform -chdir=infra/environments/dev plan \
+            -input=false \
+            -out=tfplan
+          terraform -chdir=infra/environments/dev apply \
+            -input=false \
+            tfplan
+
+          api_endpoint=$(terraform -chdir=infra/environments/dev output -raw api_endpoint)
+          echo "endpoint=${api_endpoint}" >> "${GITHUB_OUTPUT}"
+
+      - name: Smoke-test API
+        env:
+          API_ENDPOINT: ${{ steps.api.outputs.endpoint }}
+        run: |
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --retry 10 \
+            --retry-all-errors \
+            --retry-delay 3 \
+            "${API_ENDPOINT}/health"
+
+      - name: Deployment summary
+        env:
+          API_ENDPOINT: ${{ steps.api.outputs.endpoint }}
+          ARTIFACT_KEY: ${{ steps.package.outputs.artifact_key }}
+        run: |
+          {
+            echo "## API dev deployed"
+            echo
+            echo "- Endpoint: ${API_ENDPOINT}"
+            echo "- Artifact: ${ARTIFACT_KEY}"
+          } >> "${GITHUB_STEP_SUMMARY}"

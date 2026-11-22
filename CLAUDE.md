@@ -8,13 +8,14 @@ Pipeline para descargar y extraer información de los KID (Documento de Datos Fu
 
 ## Entorno
 
-- Windows, Python 3.14, entorno virtual en `venv/` (no se versiona).
-- Dependencias en `requirements.txt`. Si añades una librería, añádela ahí.
-- Ejecutar scripts desde la raíz del repo: `python <script>.py`.
+- Python 3.14 y `uv`; el entorno `.venv/` no se versiona.
+- Dependencias y grupos en `pyproject.toml`; `uv.lock` sí se versiona.
+- Añadir dependencias con `uv add --group <grupo> <paquete>`.
+- Ejecutar desde la raíz con `uv run --group <grupo> python <script>.py`.
 
 ## Estructura
 
-- `descargar_kids_bestinver.py`: etapa 1, scraping de los PDFs de Bestinver (datos fundamentales y ficha del fondo).
+- `webscrapper/descargar_kids_bestinver.py`: etapa 1, scraping de los PDF de Bestinver (datos fundamentales y ficha del fondo).
 - Almacenamiento: los PDFs se suben a S3, bucket `curso-miax-pipeline-fondos`, con claves `<gestora>/<AAAAMMDD>/<slug>_<tipo>.pdf` (`boto3`, credenciales estándar de AWS). `descargas/` queda en `.gitignore` por si se guarda algo en local.
 
 ## Convenciones

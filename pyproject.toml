@@ -1,0 +1,59 @@
+[project]
+name = "pipeline-fondos"
+version = "0.1.0"
+description = "Pipeline para extraer y consultar información de fondos de inversión."
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = []
+
+[dependency-groups]
+modelos = [
+    "pydantic>=2.12,<3",
+]
+aws = [
+    "boto3[crt]",
+]
+api = [
+    { include-group = "modelos" },
+    "fastapi>=0.136,<1",
+    "mangum>=0.21,<1",
+]
+scraping = [
+    { include-group = "aws" },
+    "lxml",
+    "requests",
+]
+procesamiento = [
+    { include-group = "aws" },
+    "onnxruntime",
+    "pymupdf4llm>=2.1",
+    "rapidocr>=3.10",
+]
+extraccion = [
+    { include-group = "aws" },
+    { include-group = "modelos" },
+    "langchain>=1.5",
+    "langchain-aws>=1.9",
+]
+dev = [
+    { include-group = "api" },
+    "httpx2>=2,<3",
+    "mypy>=1.17,<2",
+    "pytest>=8,<10",
+    "ruff>=0.12,<1",
+    "uvicorn>=0.46,<1",
+]
+
+[tool.uv]
+package = false
+default-groups = []
+
+[tool.ruff]
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.mypy]
+python_version = "3.14"
+files = ["api"]
