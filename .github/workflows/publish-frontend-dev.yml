@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - ".dockerignore"
+      - ".github/workflows/manage-frontend-dev.yml"
       - ".github/workflows/publish-frontend-dev.yml"
       - "Dockerfile"
       - "api/models/**"
