@@ -2,7 +2,7 @@
 
 Proyecto para extraer información de los KID (Documento de Datos Fundamentales) y fichas de fondos de inversión.
 
-La primera etapa del pipeline descarga, mediante web scraping, los documentos de **Bestinver y Azvalor** y los guarda en **Amazon S3**.
+La primera etapa del pipeline descarga, mediante web scraping, los documentos de **Bestinver, Azvalor y Cobas AM** y los guarda en **Amazon S3**.
 
 Para preparar un bucket de pruebas en una cuenta propia y entender las decisiones
 de captura, consulta la [guía AWS de captura](documentacion/GUIA_AWS_CAPTURA.md).
@@ -138,6 +138,26 @@ manifiesto. Las claves son `raw/azvalor/AAAAMMDD/<slug>_<tipo>.pdf` y el
 manifiesto se guarda bajo `manifests/azvalor/`. En la prueba real del 23/11/2026
 se encontraron **11 KID y 10 fichas**; la página de Capital FI no enlazaba una
 ficha de producto. La estructura y los documentos pueden cambiar.
+
+## Etapa 1: descarga de documentos de Cobas AM
+
+Script: [`webscrapper/descargar_kids_cobas.py`](webscrapper/descargar_kids_cobas.py).
+
+Descubre los productos de inversión enlazados desde `https://www.cobasam.com/productos/`
+y extrae el enlace `PRIIP pdf` y la `Ficha del fondo pdf` de cada bloque de
+producto o clase. Conserva el ISIN y la clase de cada bloque; las claves de
+clase incluyen un sufijo como `-clase-a`. No selecciona arbitrariamente un
+enlace o una clase si existen varios candidatos incompatibles. Los planes de
+pensiones quedan fuera del alcance de esta captura de fondos de inversión.
+
+```bash
+uv run --group scraping python webscrapper/descargar_kids_cobas.py --bucket mi-bucket
+uv run --group scraping python webscrapper/descargar_kids_cobas.py --bucket mi-bucket --fecha 20261123 --delay 1 --correlation-id prueba-cobas
+```
+
+Las claves son `raw/cobas/AAAAMMDD/<slug>_<tipo>.pdf` y el manifiesto se
+guarda bajo `manifests/cobas/`. En la prueba real del 23/11/2026 se capturaron
+22 KID y 22 fichas correspondientes a siete productos y sus clases.
 
 ## Etapa 2: transformación de PDF a Markdown
 
