@@ -23,35 +23,29 @@ import argparse
 import sys
 import time
 from urllib.parse import urljoin, urlparse
-from uuid import uuid4
 
 import requests
 
 if __package__:
     from .base import Documento, Incidencia, ResultadoIngesta
+    from .ingesta import ejecutar as ejecutar_ingesta
     from .ingesta import (
-        CORRELATION_ID,
-        fecha_valida,
+        ejecutar_cli,
         informar,
         normalizar,
         obtener_arbol,
     )
-    from .ingesta import ejecutar as ejecutar_ingesta
 else:
     from base import Documento, Incidencia, ResultadoIngesta
+    from ingesta import ejecutar as ejecutar_ingesta
     from ingesta import (
-        CORRELATION_ID,
-        fecha_valida,
+        ejecutar_cli,
         informar,
         normalizar,
         obtener_arbol,
     )
-    from ingesta import ejecutar as ejecutar_ingesta
 
 BASE_URL = "https://www.bestinver.es/fondos-de-inversion/"
-
-BUCKET_POR_DEFECTO = "curso-miax-pipeline-fondos"
-PREFIJO_POR_DEFECTO = "bestinver"
 
 XPATH_LISTA_FONDOS = "/html/body/div[1]/footer/div[2]/div/div[1]/div/ul"
 XPATH_LISTA_DOCUMENTOS = "/html/body/div[1]/div/main/section[3]/div[1]/div[2]/ul"
@@ -141,25 +135,7 @@ class ScraperBestinver:
         return documentos
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--bucket", default=BUCKET_POR_DEFECTO, help="Bucket de S3 de destino")
-    parser.add_argument("--prefijo", default=PREFIJO_POR_DEFECTO, help="Carpeta raíz dentro del bucket")
-    parser.add_argument(
-        "--fecha", type=fecha_valida, default=None,
-        help="Subcarpeta de fecha AAAAMMDD (por defecto, hoy)",
-    )
-    parser.add_argument("--delay", type=float, default=1.0, help="Segundos de espera entre peticiones")
-    parser.add_argument("--correlation-id", default=None, help="Identificador de la ejecución")
-    args = parser.parse_args()
-    correlation_id = args.correlation_id or str(uuid4())
-    if len(correlation_id) > 128 or not correlation_id.isascii() or not correlation_id.isprintable():
-        parser.error("El correlation-id debe ser ASCII imprimible y tener hasta 128 caracteres")
-    token = CORRELATION_ID.set(correlation_id)
-    try:
-        resultado = ejecutar(args)
-        return 0 if resultado.estado == "completa" else 1
-    finally:
-        CORRELATION_ID.reset(token)
+    return ejecutar_cli(ScraperBestinver, "bestinver", BASE_URL, __doc__)
 
 def ejecutar(args: argparse.Namespace) -> ResultadoIngesta:
     return ejecutar_ingesta(args, ScraperBestinver, "bestinver", BASE_URL)

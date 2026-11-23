@@ -2,7 +2,7 @@
 
 Proyecto para extraer información de los KID (Documento de Datos Fundamentales) y fichas de fondos de inversión.
 
-La primera etapa del pipeline descarga, mediante web scraping, los documentos de los fondos de **Bestinver** y los guarda en **Amazon S3**.
+La primera etapa del pipeline descarga, mediante web scraping, los documentos de **Bestinver y Azvalor** y los guarda en **Amazon S3**.
 
 Para preparar un bucket de pruebas en una cuenta propia y entender las decisiones
 de captura, consulta la [guía AWS de captura](documentacion/GUIA_AWS_CAPTURA.md).
@@ -116,6 +116,28 @@ Cada ejecución guarda los documentos en una carpeta con la fecha de Madrid (`AA
 - **37 PDFs** subidos a `s3://curso-miax-pipeline-fondos/bestinver/20261119/`: 22 "Datos fundamentales" y 15 "Fichas del fondo".
 - Sin ficha publicada en la web: Latam, Solidario y Bonos Institucional I–V.
 - `Otros` y `SICAV Luxemburguesas` son páginas que agrupan varios productos y no tienen estos documentos.
+
+## Etapa 1: descarga de documentos de Azvalor
+
+Script: [`webscrapper/descargar_kids_azvalor.py`](webscrapper/descargar_kids_azvalor.py).
+
+Descubre los fondos de inversión y las SICAV o clases enlazados en el menú de
+`https://www.azvalor.com/fondos-de-inversion/`. Identifica por el texto del
+enlace el **Folleto simplificado (DFP)** o **Documento de datos fundamentales**
+como KID y la ficha de producto como `ficha_fondo`. Mantiene claves diferentes
+para cada clase, incluso si comparten la misma ficha. Si encuentra varios KID
+distintos para un producto, informa un fallo en lugar de elegir uno al azar.
+
+```bash
+uv run --group scraping python webscrapper/descargar_kids_azvalor.py --bucket mi-bucket
+uv run --group scraping python webscrapper/descargar_kids_azvalor.py --bucket mi-bucket --fecha 20261123 --delay 1 --correlation-id prueba-azvalor
+```
+
+Comparte con Bestinver la validación PDF, el versionado, los metadatos y el
+manifiesto. Las claves son `raw/azvalor/AAAAMMDD/<slug>_<tipo>.pdf` y el
+manifiesto se guarda bajo `manifests/azvalor/`. En la prueba real del 23/11/2026
+se encontraron **11 KID y 10 fichas**; la página de Capital FI no enlazaba una
+ficha de producto. La estructura y los documentos pueden cambiar.
 
 ## Etapa 2: transformación de PDF a Markdown
 

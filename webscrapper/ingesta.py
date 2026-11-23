@@ -96,6 +96,25 @@ def fecha_valida(texto: str) -> str:
         raise argparse.ArgumentTypeError(f"fecha no válida '{texto}', formato AAAAMMDD")
     return texto
 
+
+def ejecutar_cli(scraper_cls, gestora: str, url_listado: str, descripcion: str | None) -> int:
+    parser = argparse.ArgumentParser(description=descripcion, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--bucket", default="curso-miax-pipeline-fondos", help="Bucket de S3 de destino")
+    parser.add_argument("--prefijo", default=gestora, help="Carpeta raíz dentro del bucket")
+    parser.add_argument("--fecha", type=fecha_valida, default=None, help="Subcarpeta de fecha AAAAMMDD (por defecto, hoy)")
+    parser.add_argument("--delay", type=float, default=1.0, help="Segundos de espera entre peticiones")
+    parser.add_argument("--correlation-id", default=None, help="Identificador de la ejecución")
+    args = parser.parse_args()
+    correlation_id = args.correlation_id or str(uuid4())
+    if len(correlation_id) > 128 or not correlation_id.isascii() or not correlation_id.isprintable():
+        parser.error("El correlation-id debe ser ASCII imprimible y tener hasta 128 caracteres")
+    token = CORRELATION_ID.set(correlation_id)
+    try:
+        resultado = ejecutar(args, scraper_cls, gestora, url_listado)
+        return 0 if resultado.estado == "completa" else 1
+    finally:
+        CORRELATION_ID.reset(token)
+
 def ejecutar(args: argparse.Namespace, scraper_cls, gestora: str, url_listado: str) -> ResultadoIngesta:
     resultado = ResultadoIngesta()
     inicio = datetime.now(timezone.utc)

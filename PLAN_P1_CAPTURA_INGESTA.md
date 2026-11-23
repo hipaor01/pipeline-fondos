@@ -30,8 +30,8 @@ Este plan desarrolla las responsabilidades de P1 del [reparto de tareas](output/
 
 ## 3. Resto de gestoras
 
-- [ ] **3.1. Investigar Azvalor.** Inspeccionar listado, páginas, enlaces y restricciones de acceso actuales; guardar HTML representativo para pruebas. **Verificación:** fuentes, selectores, posibles fallbacks y necesidad o no de JavaScript documentados.
-- [ ] **3.2. Implementar Azvalor.** Integrar el adaptador con la base común y el contrato C1. **Verificación:** tests con fixtures y ejecución controlada que identifique los KID disponibles, errores y omisiones.
+- [ ] **3.1. Investigar Azvalor.** Inspeccionar listado, páginas, enlaces y restricciones de acceso actuales; guardar HTML representativo para pruebas. **Verificación:** fuentes, selectores, posibles fallbacks y necesidad o no de JavaScript documentados. La consulta de `robots.txt` devolvió 418; falta verificar sus reglas.
+- [x] **3.2. Implementar Azvalor.** Integrar el adaptador con la base común y el contrato C1. **Verificación:** tests con fixtures y ejecución controlada que identifique los KID disponibles, errores y omisiones.
 - [ ] **3.3. Investigar Cobas AM.** Inspeccionar páginas, clases, ISIN y enlaces actuales; guardar HTML representativo. **Verificación:** documentar cómo se distingue cada clase y si se necesita JavaScript.
 - [ ] **3.4. Implementar Cobas AM.** Identificar los KID por producto y clase sin sobrescribir documentos distintos. **Verificación:** tests con varias clases, documentos ausentes y colisiones; ejecución controlada y manifiesto coherente.
 - [ ] **3.5. Decidir el empaquetado de las fuentes.** Usar imagen común para HTML estático y separar una imagen solo si una fuente necesita Playwright. **Verificación:** decisión basada en la inspección real y pruebas de las imágenes necesarias.
@@ -69,6 +69,7 @@ Este plan desarrolla las responsabilidades de P1 del [reparto de tareas](output/
 | 2026-11-22 | 1.7 | Commit `8805f9a`: manifiesto por intento con versiones, hash y errores; pruebas con S3 simulado. | Verificar persistencia real y reconciliación tras interrupción en AWS. |
 | 2026-11-22 | 1.6 | Commit `cadebb0`: exige versionado y prueba repeticiones y concurrencia con S3 simulado. | La deduplicación lógica corresponde a P2 y aún no está implementada; probar AWS y P2 antes de cerrar. |
 | 2026-11-23 | 1.3–1.8, 2.1 | [Prueba real en AWS](documentacion/GUIA_AWS_CAPTURA.md#resultado-de-la-prueba-real-del-23-de-noviembre): 36 subidas en ejecución parcial y 37 en ejecución completa; verificados hashes, metadatos y versiones. Commits `d27362d` y `4874e73` corrigen codificación, selector y PDF recuperable. | 1.6 sigue abierta: no se ha probado deduplicación lógica ni concurrencia real con P2. 2.2 requiere el consumidor P2. |
+| 2026-11-23 | 3.1 y 3.2 | [Estudio y prueba de Azvalor](documentacion/CAPTURA_AZVALOR.md): 11 productos, 11 KID y 10 fichas; 21 versiones comprobadas en S3. | `robots.txt` respondió 418; no se pudieron verificar sus reglas. Eventos y deduplicación lógica pendientes de P2. |
 
 ## Evidencia 0.1: inventario de Bestinver
 

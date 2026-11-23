@@ -23,11 +23,13 @@ El KID de Bestinver Consumo Global tenía una tabla de referencias dañada. El m
 
 En ambas ejecuciones se leyó desde S3 **cada versión indicada en su manifiesto** y se compararon los bytes, su SHA-256, tipo de contenido, metadatos y `correlation-id`. Los 36 documentos presentes en ambas tenían el mismo hash y `VersionId` distinto. En total quedaron 37 claves PDF con 73 versiones físicas. La segunda ejecución incorporó el KID que había fallado en la primera. Esta prueba confirma el comportamiento de versionado y trazabilidad observado, **no** la deduplicación lógica, la integración con eventos ni la concurrencia en AWS.
 
+El mismo día se probó Azvalor en el mismo bucket: se subieron 11 KID y 10 fichas con un manifiesto completo y se verificaron las 21 versiones y sus hashes. La página de Azvalor Capital FI no enlazaba una ficha. El análisis de la fuente y sus clases está en [CAPTURA_AZVALOR.md](CAPTURA_AZVALOR.md).
+
 ## Diseño y decisiones
 
 ```text
 Hoy, ejecutado localmente:
-  Bestinver → scraper Python → S3 versionado
+  Bestinver / Azvalor → scrapers Python → S3 versionado
                                ├─ raw/bestinver/FECHA/*_kid.pdf
                                ├─ raw/bestinver/FECHA/*_ficha_fondo.pdf
                                └─ manifests/bestinver/FECHA/.../*.json
@@ -36,7 +38,7 @@ Futuro, todavía no implementado:
   Scheduler → Step Functions → scrapers → S3 → SQS → procesamiento P2 → base de datos
 ```
 
-- **Ámbito:** Bestinver es el único scraper implementado. Azvalor y Cobas siguen pendientes. La región prevista para el proyecto es `eu-west-3`; el día de las carpetas se calcula en `Europe/Madrid` y el instante de descarga se registra en UTC.
+- **Ámbito:** hay scrapers para Bestinver y Azvalor; Cobas sigue pendiente. La región prevista para el proyecto es `eu-west-3`; el día de las carpetas se calcula en `Europe/Madrid` y el instante de descarga se registra en UTC.
 - **Bucket de documentos:** separado del bucket que Terraform utiliza para su estado y del bucket de artefactos de despliegue. Su nombre se pasa con `--bucket`. Debe ser privado, estar cifrado y tener el versionado activado. La guía de abajo configura esto para una prueba; no lo añade al estado de Terraform.
 - **Claves:** `raw/{gestora}/{AAAAMMDD}/{slug}_{tipo}.pdf`, con tipos `kid` y `ficha_fondo`. `raw/` y `manifests/` son prefijos de objetos, no carpetas que haya que crear previamente. La salida histórica `bestinver/..._datos_fundamentales.pdf` no se migra automáticamente.
 - **Metadatos de cada PDF:** `gestora`, `tipo-documento`, `url-origen`, `fecha-descarga-utc`, `sha256` y `correlation-id`, además de `Content-Type: application/pdf`. El hash corresponde a los bytes descargados. Las subidas y sus versiones se registran en el manifiesto.
@@ -147,7 +149,7 @@ Para revisar el manifiesto, seleccionar su clave de `list-objects-v2` y descarga
 ## 4. Qué falta para reproducir el proyecto completo
 
 1. Definir mediante Terraform el almacenamiento de documentos o acordar la incorporación de uno ya existente; esta guía AWS CLI crea recursos fuera del estado Terraform y **no debe aplicarse Terraform sobre ellos sin planificar su importación o transición**.
-2. Implementar las otras gestoras, las imágenes y Lambdas de captura, Step Functions y Scheduler; comprobar qué infraestructura existe antes de crear recursos compartidos.
+2. Implementar Cobas, las imágenes y Lambdas de captura, Step Functions y Scheduler; comprobar qué infraestructura existe antes de crear recursos compartidos.
 3. Implementar P2: SQS/DLQ, consumidor, lectura de la versión exacta, procesamiento y base de datos con unicidad transaccional. Definir las notificaciones del bucket una sola vez y conservar las existentes.
 4. Adaptar bootstrap OIDC, estados y workflows a la cuenta y repositorio de destino. Las variables de cuenta y ARN de los workflows actuales pertenecen al entorno del proyecto original; la creación del bucket de prueba no los cambia.
 5. Acordar retención de versiones y manifiestos, permisos mínimos y cómo recuperar una ejecución interrumpida. Antes de eliminar un bucket versionado hay que considerar **todas las versiones y delete markers**, no solo los objetos actuales; esta guía no borra datos automáticamente.
