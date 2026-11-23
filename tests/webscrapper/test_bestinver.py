@@ -1,6 +1,7 @@
 """Pruebas de descubrimiento sin peticiones a la web."""
 
 import json
+import re
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
@@ -15,16 +16,16 @@ from webscrapper.base import Documento
 from webscrapper.descargar_kids_bestinver import (
     BASE_URL,
     ScraperBestinver,
-    descargar,
     ejecutar,
     main,
 )
+from webscrapper.ingesta import descargar
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def respuesta(contenido: str | bytes) -> Mock:
-    return Mock(content=contenido.encode() if isinstance(contenido, str) else contenido, raise_for_status=Mock())
+    return Mock(content=contenido.encode() if isinstance(contenido, str) else contenido, encoding="utf-8", raise_for_status=Mock())
 
 
 def pdf_valido() -> bytes:
@@ -50,6 +51,7 @@ def test_descubre_fondo_y_documentos_con_selectores_principales(capsys) -> None:
         ("bestinfond", "ficha_fondo", "https://www.bestinver.es/bestinfond-ficha.pdf"),
     ]
     assert not scraper.fallos
+    assert documentos[0].nombre_fondo == "Bestinfond España"
     assert session.get.call_count == 2
     assert session.get.call_args_list[0].args[0] == BASE_URL
     assert "usando respaldo" not in capsys.readouterr().out
@@ -95,8 +97,8 @@ def test_cli_conserva_las_claves_y_metadatos_de_las_subidas(capsys) -> None:
     s3.put_object.return_value = {"VersionId": "v1"}
     with (
         patch("sys.argv", ["scraper", "--fecha", "20261122", "--delay", "0", "--correlation-id", "prueba-1"]),
-        patch("webscrapper.descargar_kids_bestinver.requests.Session", return_value=session),
-        patch("webscrapper.descargar_kids_bestinver.boto3.client", return_value=s3),
+        patch("webscrapper.ingesta.requests.Session", return_value=session),
+        patch("webscrapper.ingesta.boto3.client", return_value=s3),
     ):
         main()
 
@@ -132,6 +134,13 @@ def test_rechaza_respuestas_vacias_y_html() -> None:
             raise AssertionError("Se aceptó una respuesta que no es un PDF")
 
 
+def test_acepta_pdf_con_tabla_de_referencias_recuperable() -> None:
+    contenido = re.sub(rb"startxref\n\d+\n%%EOF", b"startxref\n1\n%%EOF", pdf_valido())
+    session = Mock()
+    session.get.return_value = respuesta(contenido)
+    assert descargar(session, "https://ejemplo.test/kid.pdf") == contenido
+
+
 def test_claves_duplicadas_no_sobrescriben_la_primera_subida(capsys) -> None:
     session = Mock()
     session.get.return_value = respuesta(pdf_valido())
@@ -144,8 +153,8 @@ def test_claves_duplicadas_no_sobrescriben_la_primera_subida(capsys) -> None:
     ]
     with (
         patch("sys.argv", ["scraper", "--fecha", "20261122", "--delay", "0"]),
-        patch("webscrapper.descargar_kids_bestinver.requests.Session", return_value=session),
-        patch("webscrapper.descargar_kids_bestinver.boto3.client", return_value=s3),
+        patch("webscrapper.ingesta.requests.Session", return_value=session),
+        patch("webscrapper.ingesta.boto3.client", return_value=s3),
         patch.object(ScraperBestinver, "descubrir", return_value=documentos),
     ):
         main()
@@ -166,8 +175,8 @@ def test_resultado_parcial_identifica_documento_que_fallo() -> None:
     s3.get_bucket_versioning.return_value = {"Status": "Enabled"}
     s3.put_object.return_value = {"VersionId": "v1"}
     with (
-        patch("webscrapper.descargar_kids_bestinver.requests.Session", return_value=session),
-        patch("webscrapper.descargar_kids_bestinver.boto3.client", return_value=s3),
+        patch("webscrapper.ingesta.requests.Session", return_value=session),
+        patch("webscrapper.ingesta.boto3.client", return_value=s3),
     ):
         resultado = ejecutar(SimpleNamespace(fecha="20261122", prefijo="bestinver", bucket="prueba", delay=0))
 
@@ -188,8 +197,8 @@ def test_error_de_listado_o_bucket_produce_estado_fallido() -> None:
         else:
             session.get.side_effect = requests.Timeout("tiempo agotado")
         with (
-            patch("webscrapper.descargar_kids_bestinver.requests.Session", return_value=session),
-            patch("webscrapper.descargar_kids_bestinver.boto3.client", return_value=s3),
+            patch("webscrapper.ingesta.requests.Session", return_value=session),
+            patch("webscrapper.ingesta.boto3.client", return_value=s3),
         ):
             resultado = ejecutar(SimpleNamespace(fecha="20261122", prefijo="bestinver", bucket="prueba", delay=0))
         assert resultado.estado == "fallida"
@@ -204,8 +213,8 @@ def test_fallo_de_subida_queda_en_manifiesto_como_resultado_incierto() -> None:
     s3.put_object.side_effect = [error, {}]
     documentos = [Documento("bestinver", "fondo", "kid", "https://ejemplo.test/a.pdf", "Fondo")]
     with (
-        patch("webscrapper.descargar_kids_bestinver.requests.Session", return_value=session),
-        patch("webscrapper.descargar_kids_bestinver.boto3.client", return_value=s3),
+        patch("webscrapper.ingesta.requests.Session", return_value=session),
+        patch("webscrapper.ingesta.boto3.client", return_value=s3),
         patch.object(ScraperBestinver, "descubrir", return_value=documentos),
     ):
         resultado = ejecutar(SimpleNamespace(fecha="20261122", prefijo="bestinver", bucket="prueba", delay=0))
@@ -227,8 +236,8 @@ def test_error_del_manifiesto_o_falta_de_version_es_visible() -> None:
         s3.put_object.side_effect = [{}, {}] if falta_version else [{"VersionId": "v1"}, error]
         documentos = [Documento("bestinver", "fondo", "kid", "https://ejemplo.test/a.pdf", "Fondo")]
         with (
-            patch("webscrapper.descargar_kids_bestinver.requests.Session", return_value=session),
-            patch("webscrapper.descargar_kids_bestinver.boto3.client", return_value=s3),
+            patch("webscrapper.ingesta.requests.Session", return_value=session),
+            patch("webscrapper.ingesta.boto3.client", return_value=s3),
             patch.object(ScraperBestinver, "descubrir", return_value=documentos),
         ):
             resultado = ejecutar(SimpleNamespace(fecha="20261122", prefijo="bestinver", bucket="prueba", delay=0))
@@ -239,7 +248,7 @@ def test_error_del_manifiesto_o_falta_de_version_es_visible() -> None:
 def test_bucket_sin_versionado_no_recibe_subidas() -> None:
     s3 = Mock()
     s3.get_bucket_versioning.return_value = {"Status": "Suspended"}
-    with patch("webscrapper.descargar_kids_bestinver.boto3.client", return_value=s3):
+    with patch("webscrapper.ingesta.boto3.client", return_value=s3):
         resultado = ejecutar(SimpleNamespace(fecha="20261122", prefijo="bestinver", bucket="prueba", delay=0))
     assert resultado.estado == "fallida"
     assert resultado.fallos[0].etapa == "versionado"

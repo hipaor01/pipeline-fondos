@@ -4,6 +4,9 @@ Proyecto para extraer información de los KID (Documento de Datos Fundamentales)
 
 La primera etapa del pipeline descarga, mediante web scraping, los documentos de los fondos de **Bestinver** y los guarda en **Amazon S3**.
 
+Para preparar un bucket de pruebas en una cuenta propia y entender las decisiones
+de captura, consulta la [guía AWS de captura](documentacion/GUIA_AWS_CAPTURA.md).
+
 ## Instalación
 
 ```bash
@@ -52,7 +55,7 @@ uv run --group scraping python webscrapper/descargar_kids_bestinver.py --correla
 2. **Documentos de cada fondo.** En la página de cada fondo hay una lista de documentos (datos fundamentales, ficha, folleto, reglamento, cuentas anuales, informes semestrales...) en el XPath:
 
    ```
-   /html/body/div[1]/div/main/section[4]/div[1]/div[2]/ul
+   /html/body/div[1]/div/main/section[3]/div[1]/div[2]/ul
    ```
 
    Los enlaces apuntan directamente a PDFs en `/wp-content/uploads/`, por ejemplo

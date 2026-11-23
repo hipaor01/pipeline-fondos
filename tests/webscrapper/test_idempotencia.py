@@ -6,7 +6,7 @@ from hashlib import sha256
 from threading import Lock
 
 from webscrapper.base import Documento
-from webscrapper.descargar_kids_bestinver import subir_s3
+from webscrapper.ingesta import subir_s3
 
 
 class S3Versionado:

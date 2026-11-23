@@ -1,0 +1,91 @@
+# Plan P1: captura e ingesta
+
+Este plan desarrolla las responsabilidades de P1 del [reparto de tareas](output/pdf/informe_reparto_tareas_contratos_pipeline_fondos.pdf). Se trabaja de arriba abajo, una tarea cada vez: antes de marcarla, guardar la evidencia de su verificación y anotar cualquier decisión o dependencia pendiente. No se considera terminada una tarea solo por tener código o Terraform escrito.
+
+**Estado inicial:** existe un scraper manual de Bestinver que descarga KID y fichas y los sube a S3. El README recoge una ejecución anterior; no se ha comprobado aquí el estado actual de la web ni de AWS. Azvalor, Cobas, el contrato C1 completo y la orquestación de P1 están pendientes.
+
+## 0. Preparación y acuerdos
+
+- [x] **0.1. Inventariar el punto de partida.** Revisar el scraper de Bestinver, sus opciones, dependencias, salida y errores; registrar qué pruebas existen y cuáles faltan. **Verificación:** lista de comportamientos actuales y limitaciones con referencias al código; véase el inventario al final de este documento.
+- [ ] **0.2. Acordar C1 con P2.** Confirmar bucket, ruta `raw/{gestora}/{AAAAMMDD}/{slug}_{tipo}.pdf`, tipos de documento, nombres de metadatos, fecha UTC, SHA-256, `Content-Type`, `correlation_id`, versiones S3 y obtención de metadatos. Acordar qué ocurre con fichas de fondo, ya que el filtro `raw/` + `.pdf` también las incluiría. **Verificación:** contrato y ejemplos versionados revisados por P2, incluido `contracts/events/pdf_created.json` si es el formato acordado.
+- [ ] **0.3. Acordar idempotencia y manifiesto con P2.** Definir identidad y alcance de los duplicados, comportamiento con contenido igual o cambiado, misma fecha, reintentos y ejecuciones concurrentes; acordar contenido, ubicación y conservación del manifiesto. **Verificación:** ejemplos de entrada y resultado aceptados por ambos responsables.
+- [ ] **0.4. Comprobar la infraestructura e integración existentes.** Identificar bucket y notificaciones, estados y módulos Terraform, entradas y salidas, permisos OIDC y despliegue; reutilizar lo que ya exista. Coordinar con P2 o P3 solo las dudas o cambios compartidos necesarios. **Verificación:** recursos, propietarios y posibles huecos documentados sin modificar recursos compartidos por sorpresa.
+
+## 1. Base común de captura
+
+- [x] **1.1. Diseñar `ScraperGestora` y tipos comunes.** Separar descubrimiento por gestora de descarga, registro y subida compartidos; representar fondo, clase, tipo de documento y URL sin perder información. **Verificación:** contrato pequeño que represente ejemplos de las tres fuentes y errores identificables.
+- [x] **1.2. Adaptar Bestinver.** Conservar descubrimiento, selectores y respaldos, opciones útiles y captura de KID y fichas según el acuerdo. **Verificación:** fixtures HTML cubren listados, documentos, ausencias y fallbacks; comparar resultados con el comportamiento anterior.
+- [x] **1.3. Validar las descargas.** Gestionar tiempos de espera y errores HTTP, respuestas vacías o que no sean PDF, enlaces repetidos y nombres de destino que puedan colisionar. Mantener una pausa razonable entre peticiones. **Verificación:** pruebas con respuestas controladas, incluidas páginas de error devueltas como HTTP 200.
+- [x] **1.4. Propagar trazabilidad.** Crear o recibir un `correlation_id` por ejecución y asociarlo a gestora, documento, logs y metadatos según C1. **Verificación:** un identificador permite relacionar el resultado de ejecución con el objeto y sus registros.
+- [x] **1.5. Implementar C1 en S3.** Construir la clave acordada, calcular SHA-256 del contenido antes de subir y adjuntar los metadatos y tipo de contenido requeridos. **Verificación:** pruebas de claves y metadatos y comprobación de un objeto real en un entorno de prueba acordado.
+- [ ] **1.6. Implementar la política de duplicados.** Aplicar las decisiones de 0.3 sin confundir sobrescritura de una clave con ausencia de duplicados lógicos. **Verificación:** pruebas de repetición, cambio de contenido, fechas distintas, reintento y concurrencia según el diseño acordado.
+- [x] **1.7. Generar el manifiesto.** Registrar por ejecución documentos detectados, subidos, omitidos y fallidos; incluir referencias, huella y motivo cuando proceda. **Verificación:** reconciliar el manifiesto con una ejecución de prueba y los objetos creados.
+- [x] **1.8. Comunicar resultados y fallos.** Distinguir éxito, fallo parcial y fallo total por gestora; conservar información suficiente para detectar documentos pendientes. **Verificación:** pruebas de fallo de listado, página, descarga y subida, y comprobación de que el resultado final refleja el fallo.
+
+## 2. Primera integración con P2
+
+- [x] **2.1. Entregar un KID real de Bestinver.** Ejecutar la captura en el entorno acordado y comprobar ruta, PDF, metadatos, hash, manifiesto y trazabilidad. **Verificación:** evidencias compartibles de la ejecución y del objeto, sin exponer datos privados. Completado en la cuenta personal de pruebas; la entrega a P2 sigue en 2.2.
+- [ ] **2.2. Probar la frontera P1 → P2.** Confirmar que P2 recibe el evento acordado, identifica la versión correcta y puede acceder al PDF y sus metadatos. **Verificación:** resultado conjunto documentado, incluyendo repetición y tratamiento de fichas según el acuerdo.
+- [ ] **2.3. Completar el primer recorrido Bestinver.** Colaborar en la prueba solicitada por el plan del equipo: web → S3 → Markdown → JSON → Aurora → API → Streamlit. P2 y P3 son responsables de sus capas. **Verificación:** evidencia de extremo a extremo o bloqueo concreto y responsable registrado; no confundir la entrega a P2 con el recorrido completo.
+
+## 3. Resto de gestoras
+
+- [ ] **3.1. Investigar Azvalor.** Inspeccionar listado, páginas, enlaces y restricciones de acceso actuales; guardar HTML representativo para pruebas. **Verificación:** fuentes, selectores, posibles fallbacks y necesidad o no de JavaScript documentados.
+- [ ] **3.2. Implementar Azvalor.** Integrar el adaptador con la base común y el contrato C1. **Verificación:** tests con fixtures y ejecución controlada que identifique los KID disponibles, errores y omisiones.
+- [ ] **3.3. Investigar Cobas AM.** Inspeccionar páginas, clases, ISIN y enlaces actuales; guardar HTML representativo. **Verificación:** documentar cómo se distingue cada clase y si se necesita JavaScript.
+- [ ] **3.4. Implementar Cobas AM.** Identificar los KID por producto y clase sin sobrescribir documentos distintos. **Verificación:** tests con varias clases, documentos ausentes y colisiones; ejecución controlada y manifiesto coherente.
+- [ ] **3.5. Decidir el empaquetado de las fuentes.** Usar imagen común para HTML estático y separar una imagen solo si una fuente necesita Playwright. **Verificación:** decisión basada en la inspección real y pruebas de las imágenes necesarias.
+
+## 4. Infraestructura y ejecución en AWS
+
+- [ ] **4.1. Preparar almacenamiento de documentos.** Definir con Terraform el bucket o la incorporación acordada del existente, privado, cifrado y versionado; preservar datos y coordinar notificaciones con P2. **Verificación:** `terraform plan` revisado y comprobación de configuración efectiva tras el despliegue acordado.
+- [ ] **4.2. Empaquetar y publicar scrapers.** Crear ECR y las imágenes necesarias, con dependencias y puntos de entrada apropiados para Lambda. **Verificación:** construcción reproducible y prueba de los handlers con eventos de ejemplo.
+- [ ] **4.3. Crear Lambdas e IAM.** Configurar una rama por gestora, recursos, timeouts, variables, logs y permisos mínimos para sus operaciones. **Verificación:** validación Terraform y ejecución controlada de cada Lambda, incluidos sus errores.
+- [ ] **4.4. Crear Step Functions.** Ejecutar las tres ramas en paralelo y tratar reintentos y errores de manera que cada fallo sea identificable y no oculte los resultados de las demás. **Verificación:** ejecución con una rama fallida y otras satisfactorias, revisando el resultado completo.
+- [ ] **4.5. Crear EventBridge Scheduler.** Configurar programación en `Europe/Madrid` y ejecución manual documentada. **Verificación:** una ejecución iniciada manualmente y otra iniciada por Scheduler; registrar fecha y resultado.
+- [ ] **4.6. Integrar el despliegue con P3.** Conectar módulos, estado, permisos OIDC y GitHub Actions acordados sin asumir que los permisos existentes cubren P1. **Verificación:** plan y validaciones de CI; despliegue reproducible según el procedimiento del equipo.
+
+## 5. Validación y cierre de P1
+
+- [ ] **5.1. Ejecutar pruebas automatizadas.** Cubrir selectores y respaldos de las tres gestoras, normalización, clases, C1, manifiesto, hash, duplicados y fallos. **Verificación:** registrar comandos y resultados; los tests no deben depender de la disponibilidad de las webs.
+- [ ] **5.2. Verificar captura real de las tres fuentes.** Registrar fecha, cantidades, documentos ausentes y errores, sin dar por válidos datos de demostración. **Verificación:** contrastar manifiestos y muestras con S3 y con las páginas de origen.
+- [ ] **5.3. Verificar repetición y aislamiento.** Repetir una captura y provocar un fallo controlado de una gestora. **Verificación:** no se crean duplicados lógicos según 0.3; las otras ramas terminan y el fallo queda visible.
+- [ ] **5.4. Verificar seguridad y operación.** Comprobar privacidad, cifrado, versionado, ausencia de credenciales en código, mínimo privilegio y trazabilidad en logs. **Verificación:** evidencia de configuración desplegada, no solo del código Terraform.
+- [ ] **5.5. Actualizar documentación.** Explicar arquitectura real, comandos locales y manuales, configuración, despliegue, rutas, manifiesto, errores, reejecución y límites conocidos. **Verificación:** otra persona puede seguir el procedimiento y entiende qué hace cada componente.
+- [ ] **5.6. Revisar aceptación con el equipo.** Confirmar las tres ramas manuales y programadas, PDF en `raw/`, deduplicación, fallos identificables, fixtures y tests, manifiesto y entrega a P2. **Verificación:** enlazar evidencia por criterio y registrar cualquier punto pendiente o dependencia externa.
+
+## Registro de avances
+
+| Fecha | Tarea | Resultado y evidencia | Pendientes / decisión |
+| --- | --- | --- | --- |
+| 2026-11-22 | Plan inicial | Revisión del PDF de reparto y del repositorio; sin comprobación de AWS ni de las webs en directo. | Empezar por 0.1 y acordar C1 con P2. |
+| 2026-11-22 | 0.1 | Inventario estático de Bestinver y búsqueda de pruebas en `tests/` y workflows; detalles y referencias abajo. | Validar comportamiento real de la web y S3 en las tareas de integración; preparar el acuerdo C1 con P2. |
+| 2026-11-22 | 0.2 y 0.3 | [Propuesta C1, idempotencia y manifiesto](contracts/C1_PROPUESTA.md), con alternativas y casos de aceptación. | Pendiente validar con P2/P3 y probar la integración; las tareas siguen abiertas. |
+| 2026-11-22 | 0.4 | [Propuesta de integración y responsabilidades P1/P2/P3](contracts/INTEGRACION_P1_P2_P3_PROPUESTA.md), basada en las raíces y permisos del repositorio. | Pendiente revisión del equipo, inventario del bucket real y validación de planes; la tarea sigue abierta. |
+| 2026-11-22 | 0.4 | Revisadas las ramas y PR disponibles de GitHub; no aparecen módulos de ingesta adicionales a los del checkout. | La sesión AWS ha caducado; falta inspeccionar los recursos reales antes de decidir si falta infraestructura. |
+| 2026-11-22 | 1.1–1.4 | Commits `2d5bd77`, `88d7379`, `bc95c3a` y `826ad28`: contrato, adaptador, validación PDF y correlación; tests sin AWS. | 1.3–1.4 requieren completar la verificación de sus criterios y de S3. |
+| 2026-11-22 | 1.5 | Commit `9987650`: claves `raw/` y metadatos C1, con pruebas simuladas. | Falta verificar un objeto real y la configuración del bucket. |
+| 2026-11-22 | 1.8 | Commit `f9590b2`: estados e incidencias estructurados y código de salida no nulo en errores; pruebas locales. | Confirmar integración con la futura orquestación. |
+| 2026-11-22 | 1.7 | Commit `8805f9a`: manifiesto por intento con versiones, hash y errores; pruebas con S3 simulado. | Verificar persistencia real y reconciliación tras interrupción en AWS. |
+| 2026-11-22 | 1.6 | Commit `cadebb0`: exige versionado y prueba repeticiones y concurrencia con S3 simulado. | La deduplicación lógica corresponde a P2 y aún no está implementada; probar AWS y P2 antes de cerrar. |
+| 2026-11-23 | 1.3–1.8, 2.1 | [Prueba real en AWS](documentacion/GUIA_AWS_CAPTURA.md#resultado-de-la-prueba-real-del-23-de-noviembre): 36 subidas en ejecución parcial y 37 en ejecución completa; verificados hashes, metadatos y versiones. Commits `d27362d` y `4874e73` corrigen codificación, selector y PDF recuperable. | 1.6 sigue abierta: no se ha probado deduplicación lógica ni concurrencia real con P2. 2.2 requiere el consumidor P2. |
+
+## Evidencia 0.1: inventario de Bestinver
+
+Revisión estática de [`webscrapper/descargar_kids_bestinver.py`](webscrapper/descargar_kids_bestinver.py), [`pyproject.toml`](pyproject.toml), README, `tests/` y workflows. No se ha ejecutado el scraper, consultado la web ni accedido a AWS; el resultado histórico del README no es una comprobación actual.
+
+### Comportamiento actual
+
+- **Dependencias y configuración:** usa `requests`, `lxml` y `boto3` mediante el grupo `scraping` ([pyproject.toml](pyproject.toml)); las credenciales siguen la cadena estándar de AWS. La CLI acepta `--bucket`, `--prefijo`, `--fecha` y `--delay`; por defecto usa `curso-miax-pipeline-fondos`, `bestinver`, la fecha local y un segundo ([script, configuración](webscrapper/descargar_kids_bestinver.py#L34), [CLI](webscrapper/descargar_kids_bestinver.py#L141)).
+- **Descubrimiento:** consulta el listado y usa un XPath del footer; si el nodo no existe, busca enlaces más generales en el footer. Filtra por estructura de ruta, elimina URLs repetidas y conserva nombre y URL ([script, fondos](webscrapper/descargar_kids_bestinver.py#L64)).
+- **Documentos:** visita cada fondo, usa el XPath principal o, si el nodo no existe, enlaces PDF dentro de `main`. Normaliza el texto y acepta la primera coincidencia exacta por tipo: `datos fundamentales` y `ficha del fondo` ([script, documentos](webscrapper/descargar_kids_bestinver.py#L95)).
+- **Descarga y S3:** usa timeouts HTTP de 30 segundos para páginas y 60 para documentos; descarga cada documento completo en memoria. Antes comprueba el bucket con `head_bucket`. Escribe `<prefijo>/<fecha>/<slug>_<tipo>.pdf` mediante `put_object`, con `ContentType=application/pdf` y el metadato `url-origen` ([script, descarga y subida](webscrapper/descargar_kids_bestinver.py#L115), [script, ejecución](webscrapper/descargar_kids_bestinver.py#L152)).
+- **Errores y salida:** errores de petición de una página o PDF y errores de subida contemplados se registran y permiten continuar; un documento ausente se informa por consola. Al final se imprimen el total de subidas y los fallos recogidos ([script, bucle](webscrapper/descargar_kids_bestinver.py#L166)).
+
+### Limitaciones y pruebas pendientes
+
+- **Selectores:** los fallbacks solo se activan si falta el nodo XPath principal, no si existe pero no contiene enlaces útiles; una coincidencia de texto distinta o varias clases del mismo tipo no se recogen. El filtro de fondos comprueba la ruta, pero no restringe explícitamente el dominio ([fondos](webscrapper/descargar_kids_bestinver.py#L73), [documentos](webscrapper/descargar_kids_bestinver.py#L98)). Faltan fixtures para selectores principales, fallback, nodo vacío, enlaces externos, variaciones de texto y documentos múltiples.
+- **Integridad:** se comprueba el estado HTTP, pero no que la respuesta sea un PDF válido o no vacío antes de subirla; tampoco se calcula SHA-256 ([descarga](webscrapper/descargar_kids_bestinver.py#L115)). Faltan pruebas de respuestas inválidas, timeouts y errores de descarga.
+- **Contrato C1 e idempotencia:** la ruta por defecto no incluye `raw/`; no se adjuntan gestora, tipo, fecha UTC, hash ni `correlation_id`. Se vuelve a hacer `put_object` en cada ejecución, sin deduplicación por contenido ni manifiesto persistente ([subida](webscrapper/descargar_kids_bestinver.py#L122), [clave](webscrapper/descargar_kids_bestinver.py#L182)). Faltan pruebas de metadatos, repetición, versiones y contenido modificado, una vez acordada su semántica con P2.
+- **Estado de ejecución:** los fallos parciales se imprimen pero no producen un resultado estructurado ni un código de salida explícito de fallo; una lista vacía tampoco se trata como error. Errores fuera de los tipos capturados pueden interrumpir el proceso ([script, ejecución](webscrapper/descargar_kids_bestinver.py#L163)). Faltan pruebas del estado final, lista vacía, fallos de página, subida y configuración.
+- **Cobertura actual:** la búsqueda en `tests/` y los workflows no encontró pruebas ni fixtures del scraper; las pruebas existentes cubren API y frontend. Tampoco hay pruebas de integración de ingesta con S3 ni validación de los selectores contra la web en esta revisión.
