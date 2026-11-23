@@ -1,0 +1,22 @@
+{
+  "isin": "ES0114673033",
+  "isin_evidencia": "ISIN: ES0114673033",
+  "nombre_producto": "BESTINFOND, F.I.",
+  "nombre_producto_evidencia": "Denominación del producto: BESTINFOND, F.I.",
+  "nombre_clase": null,
+  "nombre_clase_evidencia": "",
+  "gestora": "BESTINVER GESTION SGIIC, S.A.",
+  "gestora_evidencia": "Nombre del productor del PRIIP: BESTINVER GESTION SGIIC, S.A.",
+  "fecha_documento": "2025-12-31",
+  "fecha_documento_evidencia": "Fecha de elaboración del documento de datos fundamentales: 31/12/2025",
+  "sri": 4,
+  "sri_evidencia": "Hemos clasificado este producto en la clase de riesgo 4 en una escala de 7",
+  "periodo_mantenimiento_anios": 5,
+  "periodo_mantenimiento_anios_evidencia": "El periodo de mantenimiento recomendado es de 5 años.",
+  "gastos_corrientes_pct": 1.8,
+  "gastos_corrientes_pct_evidencia": "1,8 % del valor de su inversión al año.",
+  "costes_entrada_pct": 0,
+  "costes_entrada_pct_evidencia": "No cobramos comisión de entrada.",
+  "costes_salida_pct": 0,
+  "costes_salida_pct_evidencia": "No cobramos una comisión de salida por este producto."
+}

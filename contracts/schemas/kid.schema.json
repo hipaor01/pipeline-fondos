@@ -1,0 +1,677 @@
+{
+  "$defs": {
+    "DatosKID": {
+      "additionalProperties": false,
+      "description": "Datos del Anexo A ya validados. Los rangos son los de la API (C4).",
+      "properties": {
+        "isin": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Z]{2}[A-Z0-9]{9}[0-9]$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Isin"
+        },
+        "nombre_producto": {
+          "anyOf": [
+            {
+              "maxLength": 300,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Nombre Producto"
+        },
+        "nombre_clase": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Nombre Clase"
+        },
+        "gestora": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Gestora"
+        },
+        "fecha_documento": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fecha Documento"
+        },
+        "sri": {
+          "anyOf": [
+            {
+              "maximum": 7,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sri"
+        },
+        "periodo_mantenimiento_anios": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Periodo Mantenimiento Anios"
+        },
+        "gastos_corrientes_pct": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Gastos Corrientes Pct"
+        },
+        "costes_entrada_pct": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Costes Entrada Pct"
+        },
+        "costes_salida_pct": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Costes Salida Pct"
+        }
+      },
+      "title": "DatosKID",
+      "type": "object"
+    },
+    "Estado": {
+      "enum": [
+        "VALID",
+        "REJECTED",
+        "ERROR"
+      ],
+      "title": "Estado",
+      "type": "string"
+    },
+    "Evidencia": {
+      "properties": {
+        "texto": {
+          "title": "Texto",
+          "type": "string"
+        },
+        "encontrada": {
+          "title": "Encontrada",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "texto",
+        "encontrada"
+      ],
+      "title": "Evidencia",
+      "type": "object"
+    },
+    "InfoModelo": {
+      "properties": {
+        "model_id": {
+          "title": "Model Id",
+          "type": "string"
+        },
+        "region": {
+          "title": "Region",
+          "type": "string"
+        },
+        "latencia_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Latencia Ms"
+        },
+        "tokens_entrada": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tokens Entrada"
+        },
+        "tokens_salida": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tokens Salida"
+        },
+        "stop_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stop Reason"
+        }
+      },
+      "required": [
+        "model_id",
+        "region"
+      ],
+      "title": "InfoModelo",
+      "type": "object"
+    },
+    "Origen": {
+      "description": "Trazabilidad hasta el PDF original (C1) y su Markdown (C2).",
+      "properties": {
+        "gestora": {
+          "title": "Gestora",
+          "type": "string"
+        },
+        "tipo_documento": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Tipo Documento"
+        },
+        "url_origen": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Url Origen"
+        },
+        "fecha_descarga": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Fecha Descarga"
+        },
+        "correlation_id": {
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "pdf_bucket": {
+          "title": "Pdf Bucket",
+          "type": "string"
+        },
+        "pdf_key": {
+          "title": "Pdf Key",
+          "type": "string"
+        },
+        "pdf_version_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Pdf Version Id"
+        },
+        "pdf_sha256": {
+          "title": "Pdf Sha256",
+          "type": "string"
+        },
+        "markdown_bucket": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Markdown Bucket"
+        },
+        "markdown_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Markdown Key"
+        },
+        "markdown_version_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Markdown Version Id"
+        },
+        "modo_ocr": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modo Ocr"
+        },
+        "conversor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Conversor"
+        }
+      },
+      "required": [
+        "gestora",
+        "tipo_documento",
+        "url_origen",
+        "fecha_descarga",
+        "correlation_id",
+        "pdf_bucket",
+        "pdf_key",
+        "pdf_version_id",
+        "pdf_sha256"
+      ],
+      "title": "Origen",
+      "type": "object"
+    },
+    "Validacion": {
+      "properties": {
+        "regla": {
+          "title": "Regla",
+          "type": "string"
+        },
+        "campo": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Campo"
+        },
+        "resultado": {
+          "title": "Resultado",
+          "type": "string"
+        },
+        "detalle": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detalle"
+        }
+      },
+      "required": [
+        "regla",
+        "resultado"
+      ],
+      "title": "Validacion",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Documento de auditoría del contrato C3.",
+  "properties": {
+    "schema_version": {
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "estado": {
+      "$ref": "#/$defs/Estado"
+    },
+    "motivo": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Resumen legible de por qué no es VALID",
+      "title": "Motivo"
+    },
+    "duplicado": {
+      "default": false,
+      "description": "El PDF (mismo sha256) ya estaba cargado",
+      "title": "Duplicado",
+      "type": "boolean"
+    },
+    "source": {
+      "$ref": "#/$defs/Origen"
+    },
+    "modelo": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/InfoModelo"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "datos": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DatosKID"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "datos_crudos": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Respuesta del modelo tal cual, útil si no pasa la validación",
+      "title": "Datos Crudos"
+    },
+    "evidencias": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Evidencia"
+      },
+      "title": "Evidencias",
+      "type": "object"
+    },
+    "validaciones": {
+      "items": {
+        "$ref": "#/$defs/Validacion"
+      },
+      "title": "Validaciones",
+      "type": "array"
+    },
+    "errores": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Errores",
+      "type": "array"
+    },
+    "iniciado_en": {
+      "format": "date-time",
+      "title": "Iniciado En",
+      "type": "string"
+    },
+    "finalizado_en": {
+      "format": "date-time",
+      "title": "Finalizado En",
+      "type": "string"
+    }
+  },
+  "required": [
+    "estado",
+    "source",
+    "iniciado_en",
+    "finalizado_en"
+  ],
+  "title": "ResultadoExtraccion",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pipeline-fondos/kid/1.0.0",
+  "x-bedrock-output-schema": {
+    "type": "object",
+    "properties": {
+      "isin": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Código ISIN de la clase: 2 letras de país, 9 alfanuméricos y 1 dígito.",
+        "pattern": "^[A-Z]{2}[A-Z0-9]{9}[0-9]$"
+      },
+      "isin_evidencia": {
+        "type": "string",
+        "description": "Fragmento LITERAL del documento del que sale 'isin', copiado tal cual (mismas palabras, números y signos, sin traducir, resumir ni corregir y sin la marca Markdown). La frase o línea mínima que contiene el dato. Cadena vacía si 'isin' es null."
+      },
+      "nombre_producto": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Nombre del fondo tal y como aparece en el KID."
+      },
+      "nombre_producto_evidencia": {
+        "type": "string",
+        "description": "Fragmento LITERAL del documento del que sale 'nombre_producto', copiado tal cual (mismas palabras, números y signos, sin traducir, resumir ni corregir y sin la marca Markdown). La frase o línea mínima que contiene el dato. Cadena vacía si 'nombre_producto' es null."
+      },
+      "nombre_clase": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Clase o serie (p. ej. «Clase C», «P Acc EUR»). Null si el KID no la indica."
+      },
+      "nombre_clase_evidencia": {
+        "type": "string",
+        "description": "Fragmento LITERAL del documento del que sale 'nombre_clase', copiado tal cual (mismas palabras, números y signos, sin traducir, resumir ni corregir y sin la marca Markdown). La frase o línea mínima que contiene el dato. Cadena vacía si 'nombre_clase' es null."
+      },
+      "gestora": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Productor del PRIIP / sociedad gestora, tal y como aparece en el KID."
+      },
+      "gestora_evidencia": {
+        "type": "string",
+        "description": "Fragmento LITERAL del documento del que sale 'gestora', copiado tal cual (mismas palabras, números y signos, sin traducir, resumir ni corregir y sin la marca Markdown). La frase o línea mínima que contiene el dato. Cadena vacía si 'gestora' es null."
+      },
+      "fecha_documento": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Fecha de elaboración o validez del KID en formato AAAA-MM-DD.",
+        "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+      },
+      "fecha_documento_evidencia": {
+        "type": "string",
+        "description": "Fragmento LITERAL del documento del que sale 'fecha_documento', copiado tal cual (mismas palabras, números y signos, sin traducir, resumir ni corregir y sin la marca Markdown). La frase o línea mínima que contiene el dato. Cadena vacía si 'fecha_documento' es null."
+      },
+      "sri": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "description": "Indicador resumido de riesgo (clase de riesgo), entero de 1 a 7."
+      },
+      "sri_evidencia": {
+        "type": "string",
+        "description": "Fragmento LITERAL del documento del que sale 'sri', copiado tal cual (mismas palabras, números y signos, sin traducir, resumir ni corregir y sin la marca Markdown). La frase o línea mínima que contiene el dato. Cadena vacía si 'sri' es null."
+      },
+      "periodo_mantenimiento_anios": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "description": "Período de mantenimiento recomendado, en años."
+      },
+      "periodo_mantenimiento_anios_evidencia": {
+        "type": "string",
+        "description": "Fragmento LITERAL del documento del que sale 'periodo_mantenimiento_anios', copiado tal cual (mismas palabras, números y signos, sin traducir, resumir ni corregir y sin la marca Markdown). La frase o línea mínima que contiene el dato. Cadena vacía si 'periodo_mantenimiento_anios' es null."
+      },
+      "gastos_corrientes_pct": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "description": "Comisiones de gestión y otros costes administrativos o de funcionamiento, en % anual (1,8 % -> 1.8). No incluye costes de operación."
+      },
+      "gastos_corrientes_pct_evidencia": {
+        "type": "string",
+        "description": "Fragmento LITERAL del documento del que sale 'gastos_corrientes_pct', copiado tal cual (mismas palabras, números y signos, sin traducir, resumir ni corregir y sin la marca Markdown). La frase o línea mínima que contiene el dato. Cadena vacía si 'gastos_corrientes_pct' es null."
+      },
+      "costes_entrada_pct": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "description": "Costes de entrada en %. 0 si el KID dice que no se cobran."
+      },
+      "costes_entrada_pct_evidencia": {
+        "type": "string",
+        "description": "Fragmento LITERAL del documento del que sale 'costes_entrada_pct', copiado tal cual (mismas palabras, números y signos, sin traducir, resumir ni corregir y sin la marca Markdown). La frase o línea mínima que contiene el dato. Cadena vacía si 'costes_entrada_pct' es null."
+      },
+      "costes_salida_pct": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "description": "Costes de salida en %. 0 si el KID dice que no se cobran."
+      },
+      "costes_salida_pct_evidencia": {
+        "type": "string",
+        "description": "Fragmento LITERAL del documento del que sale 'costes_salida_pct', copiado tal cual (mismas palabras, números y signos, sin traducir, resumir ni corregir y sin la marca Markdown). La frase o línea mínima que contiene el dato. Cadena vacía si 'costes_salida_pct' es null."
+      }
+    },
+    "required": [
+      "isin",
+      "isin_evidencia",
+      "nombre_producto",
+      "nombre_producto_evidencia",
+      "nombre_clase",
+      "nombre_clase_evidencia",
+      "gestora",
+      "gestora_evidencia",
+      "fecha_documento",
+      "fecha_documento_evidencia",
+      "sri",
+      "sri_evidencia",
+      "periodo_mantenimiento_anios",
+      "periodo_mantenimiento_anios_evidencia",
+      "gastos_corrientes_pct",
+      "gastos_corrientes_pct_evidencia",
+      "costes_entrada_pct",
+      "costes_entrada_pct_evidencia",
+      "costes_salida_pct",
+      "costes_salida_pct_evidencia"
+    ],
+    "additionalProperties": false
+  }
+}

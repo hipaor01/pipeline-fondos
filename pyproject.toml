@@ -49,6 +49,16 @@ dev = [
     "ruff>=0.12,<1",
     "uvicorn>=0.46,<1",
 ]
+lambda-procesamiento = [
+    { include-group = "aws" },
+    { include-group = "modelos" },
+    "pymupdf4llm>=2.1",
+]
+test-procesamiento = [
+    { include-group = "lambda-procesamiento" },
+    "psycopg[binary]>=3.2,<4",
+    "pytest>=8,<10",
+]
 
 [tool.uv]
 package = false

@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pipeline-fondos/events/markdown_created/1.0.0",
+  "title": "C2 - Markdown creado (P2 PDF -> P2 IA)",
+  "description": "Evento 'Object Created' de S3 entregado por EventBridge a la cola SQS de extracción. Clave: processed/markdown/{gestora}/{AAAAMMDD}/{slug}_{tipo}.md. Los metadatos del objeto (x-amz-meta-*) conservan la trazabilidad del PDF; ver 'x-object-metadata'. Escritura idempotente: si ya existe el .md con el mismo pdf-sha256 no se reescribe ni se vuelve a emitir el evento.",
+  "x-eventbridge-pattern": {
+    "source": ["aws.s3"],
+    "detail-type": ["Object Created"],
+    "detail": {
+      "bucket": { "name": ["<bucket de documentos>"] },
+      "object": { "key": [{ "wildcard": "processed/markdown/*.md" }] }
+    }
+  },
+  "type": "object",
+  "required": ["source", "detail-type", "detail"],
+  "properties": {
+    "source": { "const": "aws.s3" },
+    "detail-type": { "const": "Object Created" },
+    "detail": {
+      "type": "object",
+      "required": ["bucket", "object"],
+      "properties": {
+        "bucket": {
+          "type": "object",
+          "required": ["name"],
+          "properties": { "name": { "type": "string" } }
+        },
+        "object": {
+          "type": "object",
+          "required": ["key"],
+          "properties": {
+            "key": {
+              "type": "string",
+              "pattern": "^processed/markdown/[a-z0-9]+(-[a-z0-9]+)*/[0-9]{8}/[a-z0-9][a-z0-9_-]*\\.md$"
+            },
+            "version-id": { "type": "string" },
+            "size": { "type": "integer" }
+          }
+        }
+      }
+    }
+  },
+  "x-object-metadata": {
+    "pdf-bucket": "Bucket del PDF de origen (C1)",
+    "pdf-key": "Clave raw/... del PDF",
+    "pdf-version-id": "VersionId del PDF",
+    "pdf-sha256": "SHA-256 hexadecimal del PDF (obligatorio; clave de idempotencia)",
+    "gestora": "Código de gestora",
+    "tipo-documento": "datos_fundamentales | ficha_fondo | ...",
+    "url-origen": "URL de la que se descargó el PDF",
+    "fecha-descarga": "ISO 8601 UTC",
+    "correlation-id": "Se propaga desde C1; si no viene se genera uno",
+    "modo-ocr": "nunca | auto | siempre",
+    "conversor": "Versión del conversor, p. ej. pymupdf4llm-2.1",
+    "convertido-en": "ISO 8601 UTC"
+  }
+}
