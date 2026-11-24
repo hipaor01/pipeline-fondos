@@ -1,0 +1,9 @@
+# syntax=docker/dockerfile:1.7
+FROM ghcr.io/astral-sh/uv:0.13.7 AS uv
+FROM public.ecr.aws/lambda/python:3.14
+COPY --from=uv /uv /usr/local/bin/uv
+COPY pyproject.toml uv.lock ${LAMBDA_TASK_ROOT}/
+RUN uv export --quiet --only-group scraping --no-emit-project --locked --output-file /tmp/requirements.txt \
+    && uv pip install --system --target ${LAMBDA_TASK_ROOT} --no-cache --requirements /tmp/requirements.txt
+COPY webscrapper ${LAMBDA_TASK_ROOT}/webscrapper
+CMD ["webscrapper.lambda_handler.handler"]
