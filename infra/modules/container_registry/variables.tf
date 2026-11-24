@@ -19,6 +19,12 @@ variable "environment" {
   type        = string
 }
 
+variable "component" {
+  description = "Componente propietario del repositorio."
+  type        = string
+  default     = "frontend"
+}
+
 variable "retained_image_count" {
   description = "Número máximo de imágenes que conserva la política de ciclo de vida."
   type        = number
