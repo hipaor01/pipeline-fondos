@@ -137,6 +137,8 @@ class ScraperCobas:
                             "No se pudo identificar de forma única la clase y su ISIN",
                             nombre,
                             url=url,
+                            nombre_clase=f"Clase {next(iter(clases))}" if len(clases) == 1 else None,
+                            isin=next(iter(codigos)) if len(codigos) == 1 else None,
                         )
                     )
                     continue
@@ -160,7 +162,8 @@ class ScraperCobas:
                     if not urls:
                         self.ausentes.append(
                             Incidencia(
-                                "ausente", "Documento no encontrado", nombre, tipo, url
+                                "ausente", "Documento no encontrado", nombre, tipo, url,
+                                nombre_clase=nombre_clase, isin=isin,
                             )
                         )
                         if tipo == "kid":
@@ -171,6 +174,7 @@ class ScraperCobas:
                                     nombre,
                                     tipo,
                                     url,
+                                    nombre_clase=nombre_clase, isin=isin,
                                 )
                             )
                     elif len(urls) > 1:
@@ -181,6 +185,7 @@ class ScraperCobas:
                                 nombre,
                                 tipo,
                                 url,
+                                nombre_clase=nombre_clase, isin=isin,
                             )
                         )
                     else:

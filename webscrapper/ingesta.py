@@ -94,6 +94,8 @@ def subir_s3(s3, bucket: str, clave: str, contenido: bytes, documento: Documento
 def fecha_valida(texto: str) -> str:
     """Valida el formato AAAAMMDD para argparse."""
     try:
+        if not re.fullmatch(r"[0-9]{8}", texto):
+            raise ValueError("La fecha debe tener ocho dígitos")
         datetime.strptime(texto, "%Y%m%d")
     except ValueError:
         raise argparse.ArgumentTypeError(f"fecha no válida '{texto}', formato AAAAMMDD")
@@ -122,8 +124,7 @@ def ejecutar(args: argparse.Namespace, scraper_cls, gestora: str, url_listado: s
     resultado = ResultadoIngesta()
     inicio = datetime.now(timezone.utc)
     intento = str(uuid4())
-    fecha = args.fecha or datetime.now(ZoneInfo("Europe/Madrid")).strftime("%Y%m%d")
-    carpeta_s3 = f"raw/{args.prefijo.strip('/')}/{fecha}"
+    fecha = args.fecha or inicio.astimezone(ZoneInfo("Europe/Madrid")).strftime("%Y%m%d")
     s3 = boto3.client("s3")
     try:
         s3.head_bucket(Bucket=args.bucket)
@@ -135,7 +136,7 @@ def ejecutar(args: argparse.Namespace, scraper_cls, gestora: str, url_listado: s
         informar(f"[error] no se puede acceder al bucket '{args.bucket}': {e}")
         resultado.fallos.append(Incidencia("bucket", str(e)))
         return resultado
-    informar(f"Destino: s3://{args.bucket}/{carpeta_s3}/\n")
+    informar(f"Destino: s3://{args.bucket}/raw/{args.prefijo.strip('/')}/\n")
 
     session = requests.Session()
     session.headers.update(HEADERS)
@@ -153,29 +154,32 @@ def ejecutar(args: argparse.Namespace, scraper_cls, gestora: str, url_listado: s
     for documento in documentos:
         nombre = documento.nombre_fondo
         sufijo = documento.tipo
-        clave = f"{carpeta_s3}/{documento.slug}_{sufijo}.pdf"
-        if clave in claves_vistas:
-            informar(f"    [error] clave S3 duplicada: {clave}")
-            resultado.fallos.append(Incidencia("clave_duplicada", clave, nombre, sufijo, documento.url))
+        identidad = (documento.slug, sufijo)
+        if identidad in claves_vistas:
+            identidad_documento = f"{documento.slug}_{sufijo}.pdf"
+            informar(f"    [error] documento duplicado en la ejecución: {identidad_documento}")
+            resultado.fallos.append(Incidencia("clave_duplicada", identidad_documento, nombre, sufijo, documento.url, nombre_clase=documento.nombre_clase, isin=documento.isin))
             continue
-        claves_vistas.add(clave)
+        claves_vistas.add(identidad)
         try:
             time.sleep(args.delay)
             contenido = descargar(session, documento.url)
             fecha_descarga = datetime.now(timezone.utc)
         except (requests.RequestException, ValueError) as e:
             informar(f"    [error] descarga {sufijo}: {e}")
-            resultado.fallos.append(Incidencia("descarga", str(e), nombre, sufijo, documento.url))
+            resultado.fallos.append(Incidencia("descarga", str(e), nombre, sufijo, documento.url, nombre_clase=documento.nombre_clase, isin=documento.isin))
             continue
+        fecha_documento = args.fecha or fecha_descarga.astimezone(ZoneInfo("Europe/Madrid")).strftime("%Y%m%d")
+        clave = f"raw/{args.prefijo.strip('/')}/{fecha_documento}/{documento.slug}_{sufijo}.pdf"
         try:
             version = subir_s3(s3, args.bucket, clave, contenido, documento, fecha_descarga)
             informar(f"    [ok] s3://{args.bucket}/{clave}")
             resultado.subidos.append(Subida(documento, args.bucket, clave, version, hashlib.sha256(contenido).hexdigest(), fecha_descarga.isoformat().replace("+00:00", "Z")))
             if not version or version == "null":
-                resultado.fallos.append(Incidencia("version_s3", "Subida sin versionId; comprobar versionado del bucket", nombre, sufijo, documento.url, clave))
+                resultado.fallos.append(Incidencia("version_s3", "Subida sin versionId; comprobar versionado del bucket", nombre, sufijo, documento.url, clave, nombre_clase=documento.nombre_clase, isin=documento.isin))
         except (BotoCoreError, ClientError) as e:
             informar(f"    [error] subida {sufijo}: {e}")
-            resultado.fallos.append(Incidencia("subida_resultado_incierto", str(e), nombre, sufijo, documento.url, clave, hashlib.sha256(contenido).hexdigest()))
+            resultado.fallos.append(Incidencia("subida_resultado_incierto", str(e), nombre, sufijo, documento.url, clave, hashlib.sha256(contenido).hexdigest(), documento.nombre_clase, documento.isin))
 
     manifiesto = {
         "schema_version": "1.0",
@@ -199,7 +203,7 @@ def ejecutar(args: argparse.Namespace, scraper_cls, gestora: str, url_listado: s
     except (BotoCoreError, ClientError) as error:
         informar(f"[error] no se pudo guardar el manifiesto: {error}")
         resultado.fallos.append(Incidencia("manifiesto_resultado_incierto", str(error), clave=clave_manifiesto))
-    informar(f"\nSubidos {len(resultado.subidos)} documentos a 's3://{args.bucket}/{carpeta_s3}/'.")
+    informar(f"\nSubidos {len(resultado.subidos)} documentos a 's3://{args.bucket}/raw/{args.prefijo.strip('/')}/'.")
     informar(f"Estado: {resultado.estado}; fallos: {len(resultado.fallos)}")
     for fallo in resultado.fallos:
         informar(f"  - {fallo.etapa}: {fallo.mensaje}")

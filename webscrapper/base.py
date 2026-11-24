@@ -26,6 +26,8 @@ class Incidencia:
     url: str | None = None
     clave: str | None = None
     sha256: str | None = None
+    nombre_clase: str | None = None
+    isin: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

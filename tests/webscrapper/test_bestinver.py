@@ -2,6 +2,7 @@
 
 import json
 import re
+from datetime import datetime, timezone
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
@@ -336,7 +337,7 @@ def test_claves_duplicadas_no_sobrescriben_la_primera_subida(capsys) -> None:
         main()
 
     assert len([call for call in s3.put_object.call_args_list if call.kwargs["Key"].endswith(".pdf")]) == 1
-    assert "clave S3 duplicada" in capsys.readouterr().out
+    assert "documento duplicado en la ejecución" in capsys.readouterr().out
 
 
 def test_resultado_parcial_identifica_documento_que_fallo() -> None:
@@ -451,3 +452,19 @@ def test_bucket_sin_versionado_no_recibe_subidas() -> None:
     assert resultado.estado == "fallida"
     assert resultado.fallos[0].etapa == "versionado"
     s3.put_object.assert_not_called()
+
+
+def test_fecha_de_cada_descarga_cruza_medianoche_y_override() -> None:
+    for fecha, esperadas in [(None, ["20261122", "20261123"]), ("20260101", ["20260101", "20260101"])]:
+        session, s3 = Mock(), Mock()
+        session.get.return_value = respuesta(pdf_valido())
+        s3.get_bucket_versioning.return_value = {"Status": "Enabled"}
+        s3.put_object.return_value = {"VersionId": "v1"}
+        documentos = [Documento("bestinver", str(i), "kid", "https://ejemplo.test/kid.pdf", str(i)) for i in range(2)]
+        tiempos = [datetime(2026, 11, 22, 22, 59, tzinfo=timezone.utc), datetime(2026, 11, 22, 22, 59, tzinfo=timezone.utc), datetime(2026, 11, 22, 23, 1, tzinfo=timezone.utc), datetime(2026, 11, 22, 23, 2, tzinfo=timezone.utc)]
+        with (patch("webscrapper.ingesta.requests.Session", return_value=session), patch("webscrapper.ingesta.boto3.client", return_value=s3), patch.object(ScraperBestinver, "descubrir", return_value=documentos), patch("webscrapper.ingesta.datetime") as reloj):
+            reloj.now.side_effect = tiempos
+            ejecutar(SimpleNamespace(fecha=fecha, prefijo="bestinver", bucket="prueba", delay=0))
+        claves = [c.kwargs["Key"] for c in s3.put_object.call_args_list]
+        assert claves[:2] == [f"raw/bestinver/{dia}/{i}_kid.pdf" for i, dia in enumerate(esperadas)]
+        assert claves[2].startswith(f"manifests/bestinver/{fecha or '20261122'}/")

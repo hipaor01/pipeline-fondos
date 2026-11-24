@@ -121,7 +121,7 @@ def test_usa_respaldo_si_solo_el_kid_esta_fuera_del_bloque_principal() -> None:
             "",
         )
         .replace(
-            "</body>", '<a href="/nuevo-dfp.pdf">Folleto simplificado (DFP)</a></body>'
+            "</body>", '<a href="/nuevo-dfp.pdf">Folleto simplificado (DFP)</a><a href="/otra-ficha.pdf">Ficha del producto</a></body>'
         )
     )
     session.get.return_value = respuesta(html)
@@ -132,6 +132,21 @@ def test_usa_respaldo_si_solo_el_kid_esta_fuera_del_bloque_principal() -> None:
     assert docs["ficha_fondo"] == {
         "https://www.azvalor.com/wp-content/uploads/ficha.pdf"
     }
+
+
+def test_usa_respaldo_si_solo_la_ficha_esta_fuera_del_bloque_principal() -> None:
+    session = Mock()
+    html = contenido("azvalor_fondo.html").replace(
+        '<a href="/wp-content/uploads/ficha.pdf">Ficha del producto</a>', ""
+    ).replace(
+        "</body>", '<a href="/nueva-ficha.pdf">Ficha del producto</a><a href="/otro-dfp.pdf">Folleto simplificado (DFP)</a></body>'
+    )
+    session.get.return_value = respuesta(html)
+    docs, _ = obtener_documentos(
+        session, "https://www.azvalor.com/fondos-de-inversion/ejemplo/"
+    )
+    assert docs["kid"] == {"https://www.azvalor.com/wp-content/uploads/dfp.pdf"}
+    assert docs["ficha_fondo"] == {"https://www.azvalor.com/nueva-ficha.pdf"}
 
 
 def test_cli_escribe_kid_ficha_y_manifiesto_en_azvalor() -> None:

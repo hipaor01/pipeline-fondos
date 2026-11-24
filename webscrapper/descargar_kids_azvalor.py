@@ -82,11 +82,11 @@ def obtener_documentos(session: requests.Session, url_fondo: str):
         return documentos
 
     documentos = filtrar(arbol.xpath(XPATH_DOCUMENTOS))
-    if "kid" not in documentos:
+    if not all(tipo in documentos for tipo in ("kid", "ficha_fondo")):
         informar("    [aviso] Lista de documentos no encontrada, usando respaldo.")
         respaldo = filtrar(arbol.xpath("//a[@href]"))
         for tipo, urls in respaldo.items():
-            documentos.setdefault(tipo, set()).update(urls)
+            documentos.setdefault(tipo, urls)
     codigos = set()
     for elemento in arbol.xpath('//div[span[normalize-space(.)="ISIN"]]'):
         codigos.update(

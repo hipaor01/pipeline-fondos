@@ -1,6 +1,11 @@
 """Ejemplos del contrato de descubrimiento para las gestoras previstas."""
 
+import argparse
+
+import pytest
+
 from webscrapper.base import Documento, ScraperGestora
+from webscrapper.ingesta import fecha_valida
 
 
 def test_el_contrato_representa_fondos_y_clases() -> None:
@@ -20,3 +25,13 @@ def test_el_contrato_representa_fondos_y_clases() -> None:
     assert {documento.gestora for documento in scraper.descubrir()} == {
         "bestinver", "azvalor", "cobas-am"
     }
+
+
+@pytest.mark.parametrize("valor", ["2026111", "2026011", "202611011", "20261301", "２０２６１１０１"])
+def test_fecha_requiere_ocho_digitos_y_dia_valido(valor):
+    with pytest.raises(argparse.ArgumentTypeError):
+        fecha_valida(valor)
+
+
+def test_fecha_valida_conserva_formato():
+    assert fecha_valida("20261101") == "20261101"

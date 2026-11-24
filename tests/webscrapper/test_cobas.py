@@ -139,3 +139,17 @@ def test_cli_subidas_por_clase_y_manifiesto() -> None:
     manifiesto = json.loads(llamadas[4].kwargs["Body"])
     assert manifiesto["gestora"] == "cobas" and manifiesto["estado"] == "completa"
     assert manifiesto["subidos"][0]["documento"]["isin"] == "ES0124037039"
+
+
+def test_incidencias_identifican_clases_con_url_compartida() -> None:
+    pagina = contenido("cobas_clases.html").replace("https://static.test/b-kid.pdf", "https://static.test/a-kid.pdf")
+    pagina = pagina.replace('<a href="https://static.test/a-ficha.pdf">Ficha del fondo <span>pdf</span></a>', '')
+    session, s3 = Mock(), Mock()
+    session.get.side_effect = [respuesta(contenido("cobas_listado.html")), respuesta(pagina), requests.Timeout("agotado"), requests.Timeout("agotado"), respuesta(pdf_valido())]
+    s3.get_bucket_versioning.return_value = {"Status": "Enabled"}
+    s3.put_object.return_value = {"VersionId": "v1"}
+    with (patch("sys.argv", ["scraper", "--fecha", "20261123", "--delay", "0"]), patch("webscrapper.ingesta.requests.Session", return_value=session), patch("webscrapper.ingesta.boto3.client", return_value=s3)):
+        main()
+    manifiesto = json.loads(s3.put_object.call_args_list[-1].kwargs["Body"])
+    assert {(f["nombre_clase"], f["isin"]) for f in manifiesto["fallos"] if f["etapa"] == "descarga"} == {("Clase A", "ES0124037039"), ("Clase B", "ES0124037021")}
+    assert any(a["nombre_clase"] == "Clase A" and a["isin"] == "ES0124037039" for a in manifiesto["ausentes"])
