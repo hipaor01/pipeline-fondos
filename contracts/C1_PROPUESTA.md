@@ -1,6 +1,6 @@
 # Propuesta C1 v1: captura y entrega de documentos
 
-**Estado:** propuesta de P1, pendiente de validación con P2 y de prueba de integración. Describe el comportamiento objetivo, no el estado del código actual. Las tareas 0.2 y 0.3 del plan siguen abiertas hasta completar su verificación.
+**Estado:** decisión de implementación de P1 para avanzar, pendiente de aceptación por P2/P3 y de prueba de integración. P1 ya publica las versiones y metadatos descritos; la deduplicación lógica y el consumidor todavía no existen. Las tareas 0.2 y 0.3 siguen abiertas hasta verificar la frontera completa.
 
 ## Objetivo y alternativas
 
@@ -42,7 +42,7 @@ La URL y el hash son ilustrativos. El nombre del bucket se inyecta por configura
 
 ## Evento y lectura por P2
 
-La propuesta es usar **notificaciones nativas S3 `ObjectCreated` → SQS estándar → consumidor de P2**. `contracts/events/pdf_created.json`, si se añade, será una fixture representativa del evento nativo, no un mensaje propio con metadatos inventados. La configuración del bucket y su propiedad Terraform se coordinan con P2/P3. S3 puede entregar eventos repetidos o fuera de orden; el consumidor procesa todos los `Records`, decodifica la clave y usa `(bucket, key, versionId)` para localizar la versión exacta.
+La propuesta es usar **notificaciones nativas S3 `ObjectCreated` → SQS estándar → consumidor de P2**. [`events/pdf_created.json`](events/pdf_created.json) es una fixture ilustrativa del evento nativo, no un mensaje propio con metadatos inventados. El ejemplo contiene valores ficticios y una clave codificada; el consumidor debe decodificarla como formulario URL, por ejemplo con `unquote_plus`. La configuración del bucket y su propiedad Terraform se coordinan con P2/P3. S3 puede entregar eventos repetidos o fuera de orden; el consumidor procesa todos los `Records`, decodifica la clave y usa `(bucket, key, versionId)` para localizar la versión exacta.
 
 P2 consulta los metadatos de esa versión, valida tipo y campos obligatorios, descarga esa misma versión y verifica el SHA-256 antes de procesar. Un fallo técnico se reintenta según la política de la cola; un documento semánticamente rechazado debe registrarse sin reintentos infinitos. Los detalles de retención, visibilidad y DLQ se fijan al integrar P2.
 
@@ -54,7 +54,7 @@ Hay tres identidades distintas:
 2. **Contenido:** `sha256` de los bytes, para reconocer el mismo PDF aunque llegue por otra fecha o clave.
 3. **Resultado de negocio:** P2 define y garantiza en su base de datos la unicidad acordada de documento y versión lógica por ISIN/fecha/documento. Una restricción atómica y una operación transaccional son necesarias para que dos consumidores concurrentes no creen dos registros; una consulta previa por sí sola no basta.
 
-La propuesta inicial es **conservar las subidas y delegar la deduplicación lógica a P2**, sin añadir un índice global en P1. Así P1 no promete evitar eventos ni versiones físicas duplicadas. P2 debe guardar la asociación de cada observación con la fuente aunque su contenido ya exista; un hash igual no demuestra por sí solo que dos referencias de gestora o clase sean la misma relación de negocio.
+La decisión para P1 es **conservar las subidas y delegar la deduplicación lógica a P2**, sin añadir un índice global en P1. Así P1 no promete evitar eventos ni versiones físicas duplicadas. P2 debe guardar la asociación de cada observación con la fuente aunque su contenido ya exista; un hash igual no demuestra por sí solo que dos referencias de gestora o clase sean la misma relación de negocio.
 
 | Caso | P1 | P2: resultado esperado |
 | --- | --- | --- |
@@ -75,12 +75,26 @@ Implementación local de Bestinver: el segmento de ejecución en la clave es el 
 
 Un documento ausente, un fallo de listado y un fallo de descarga o subida deben poder distinguirse; no se inventan claves ni hashes no conocidos. Se conserva el manifiesto al menos durante el periodo operativo y de auditoría que acuerde el equipo. El manifiesto es **auditoría, no garantía transaccional**: una interrupción puede ocurrir antes de escribirlo, y un timeout de subida puede dejar su resultado incierto. Los logs y la reconciliación con S3 deben hacer visibles esas situaciones; P2 no depende de la presencia del manifiesto para recibir un evento.
 
+## Ejemplos de resultados del manifiesto
+
+Estos fragmentos ilustran campos relevantes; las claves, identificadores y hashes son ficticios. El JSON completo añade los campos temporales, contadores y datos del documento descritos arriba.
+
+| Situación | Campos relevantes |
+| --- | --- |
+| Subida confirmada | `estado: completa`; `subidos` contiene `clave`, `version_id` y `sha256`. |
+| Una subida correcta y otra fallida | `estado: parcial`; `subidos` conserva la versión confirmada y `fallos` identifica la etapa y el origen del documento fallido. |
+| Resultado incierto de subida | `fallos` contiene `etapa: subida_resultado_incierto`, `clave` y el `sha256` calculado; no se inventa un `versionId`. Reconciliar esa clave y hash con las versiones de S3 antes de decidir un reintento. |
+| Fallo al guardar el manifiesto | La ejecución informa `manifiesto_resultado_incierto`; el propio manifiesto puede no existir o haberse guardado pese al error. Consultar logs, ejecuciones y versiones en S3. |
+
+La prueba de S3 real cubre las versiones físicas; los ejemplos de arriba no prueban una deduplicación lógica de P2.
+
 ## Verificación antes de dar 0.2 y 0.3 por terminadas
 
 - [ ] Revisar y aceptar con P2 tipos, ruta, metadatos, evento, política de fichas, identidades y asociación de procedencias.
 - [ ] Acordar con P3/P2 bucket y propiedad de la configuración de eventos; comprobar versionado, permisos y retención.
-- [ ] Versionar un ejemplo realista del evento nativo seleccionado y ejemplos del manifiesto con éxito, fallo parcial y resultado incierto.
-- [ ] Probar con AWS o emulación adecuada la lectura por `versionId`, claves codificadas y procesamiento de duplicados; validar además los casos de concurrencia y cambio el mismo día con el almacenamiento real de P2.
+- [x] Versionar un ejemplo ilustrativo del evento nativo seleccionado.
+- [x] Documentar ejemplos de manifiesto con éxito, fallo parcial y resultado incierto.
+- [ ] Probar el consumidor de P2 con claves codificadas, eventos repetidos y fuera de orden; validar los casos de concurrencia y cambio el mismo día con su almacenamiento real. P1 ya comprobó versiones exactas, cambios y concurrencia en S3 real, pero eso no valida el consumidor.
 - [ ] Documentar el resultado, límites y política de reconciliación. Una propuesta escrita no equivale a aceptación de P2 ni a una prueba de integración.
 
 Referencias AWS: [estructura de eventos S3](https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-content-structure.html), [filtros por prefijo y sufijo](https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-how-to-filtering.html), [lectura de metadatos de una versión](https://docs.aws.amazon.com/AmazonS3/latest/userguide/RetMetaOfObjVersion.html) y [escrituras condicionales](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html).

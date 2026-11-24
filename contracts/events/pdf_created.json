@@ -1,0 +1,20 @@
+{
+  "Records": [
+    {
+      "eventVersion": "2.1",
+      "eventSource": "aws:s3",
+      "awsRegion": "eu-west-3",
+      "eventTime": "2026-11-24T19:00:00.000Z",
+      "eventName": "ObjectCreated:Put",
+      "userIdentity": {"principalId": "EXAMPLE"},
+      "requestParameters": {"sourceIPAddress": "192.0.2.1"},
+      "responseElements": {"x-amz-request-id": "EXAMPLE", "x-amz-id-2": "EXAMPLE"},
+      "s3": {
+        "s3SchemaVersion": "1.0",
+        "configurationId": "pdf-kid",
+        "bucket": {"name": "example-p1-documents", "ownerIdentity": {"principalId": "EXAMPLE"}, "arn": "arn:aws:s3:::example-p1-documents"},
+        "object": {"key": "raw%2Fbestinver%2F20261124%2Ffondo_kid.pdf", "size": 1234, "eTag": "0123456789abcdef0123456789abcdef", "versionId": "example-version-id", "sequencer": "006000000000000001"}
+      }
+    }
+  ]
+}

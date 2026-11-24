@@ -1,6 +1,6 @@
 # Guía AWS: captura de documentos de fondos
 
-Esta guía explica cómo está organizada la captura P1, qué decisiones se han tomado y cómo preparar **un bucket de pruebas propio** con AWS CLI para ejecutar el scraper actual. No es un despliegue completo del proyecto: la conversión, P2, las colas y la ejecución programada todavía no están conectadas en este repositorio.
+Esta guía explica cómo está organizada la captura P1, qué decisiones se han tomado y cómo preparar **un bucket de pruebas propio** con AWS CLI para ejecutar el scraper actual. No es un despliegue completo del proyecto: la conversión, P2 y su cola siguen sin conectarse. La ejecución programada de P1 se ha probado en la cuenta personal y está documentada en [AUTOMATIZACION_P1.md](AUTOMATIZACION_P1.md).
 
 ## Estado comprobado
 

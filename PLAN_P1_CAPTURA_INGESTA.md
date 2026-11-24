@@ -2,7 +2,7 @@
 
 Este plan desarrolla las responsabilidades de P1 del [reparto de tareas](output/pdf/informe_reparto_tareas_contratos_pipeline_fondos.pdf). Se trabaja de arriba abajo, una tarea cada vez: antes de marcarla, guardar la evidencia de su verificación y anotar cualquier decisión o dependencia pendiente. No se considera terminada una tarea solo por tener código o Terraform escrito.
 
-**Estado inicial:** existe un scraper manual de Bestinver que descarga KID y fichas y los sube a S3. El README recoge una ejecución anterior; no se ha comprobado aquí el estado actual de la web ni de AWS. Azvalor, Cobas, el contrato C1 completo y la orquestación de P1 están pendientes.
+**Estado inicial histórico:** existía un scraper manual de Bestinver que descarga KID y fichas y los sube a S3. El README recoge una ejecución anterior; no se ha comprobado aquí el estado actual de la web ni de AWS. En ese momento Azvalor, Cobas, el contrato C1 completo y la orquestación de P1 estaban pendientes; consultar las casillas y evidencias siguientes para el estado actual.
 
 ## 0. Preparación y acuerdos
 
@@ -34,21 +34,21 @@ Este plan desarrolla las responsabilidades de P1 del [reparto de tareas](output/
 - [x] **3.2. Implementar Azvalor.** Integrar el adaptador con la base común y el contrato C1. **Verificación:** tests con fixtures y ejecución controlada que identifique los KID disponibles, errores y omisiones.
 - [x] **3.3. Investigar Cobas AM.** Inspeccionar páginas, clases, ISIN y enlaces actuales; guardar HTML representativo. **Verificación:** documentar cómo se distingue cada clase y si se necesita JavaScript.
 - [x] **3.4. Implementar Cobas AM.** Identificar los KID por producto y clase sin sobrescribir documentos distintos. **Verificación:** tests con varias clases, documentos ausentes y colisiones; ejecución controlada y manifiesto coherente.
-- [ ] **3.5. Decidir el empaquetado de las fuentes.** Usar imagen común para HTML estático y separar una imagen solo si una fuente necesita Playwright. **Verificación:** decisión basada en la inspección real y pruebas de las imágenes necesarias.
+- [x] **3.5. Decidir el empaquetado de las fuentes.** Usar imagen común para HTML estático y separar una imagen solo si una fuente necesita Playwright. **Verificación:** decisión basada en la inspección real y pruebas de las imágenes necesarias.
 
 ## 4. Infraestructura y ejecución en AWS
 
 - [ ] **4.1. Preparar almacenamiento de documentos.** Definir con Terraform el bucket o la incorporación acordada del existente, privado, cifrado y versionado; preservar datos y coordinar notificaciones con P2. **Verificación:** `terraform plan` revisado y comprobación de configuración efectiva tras el despliegue acordado.
-- [ ] **4.2. Empaquetar y publicar scrapers.** Crear ECR y las imágenes necesarias, con dependencias y puntos de entrada apropiados para Lambda. **Verificación:** construcción reproducible y prueba de los handlers con eventos de ejemplo.
-- [ ] **4.3. Crear Lambdas e IAM.** Configurar una rama por gestora, recursos, timeouts, variables, logs y permisos mínimos para sus operaciones. **Verificación:** validación Terraform y ejecución controlada de cada Lambda, incluidos sus errores.
-- [ ] **4.4. Crear Step Functions.** Ejecutar las tres ramas en paralelo y tratar reintentos y errores de manera que cada fallo sea identificable y no oculte los resultados de las demás. **Verificación:** ejecución con una rama fallida y otras satisfactorias, revisando el resultado completo.
-- [ ] **4.5. Crear EventBridge Scheduler.** Configurar programación en `Europe/Madrid` y ejecución manual documentada. **Verificación:** una ejecución iniciada manualmente y otra iniciada por Scheduler; registrar fecha y resultado.
+- [x] **4.2. Empaquetar y publicar scrapers.** Crear ECR y las imágenes necesarias, con dependencias y puntos de entrada apropiados para Lambda. **Verificación:** construcción reproducible y prueba de los handlers con eventos de ejemplo.
+- [x] **4.3. Crear Lambdas e IAM.** Configurar una rama por gestora, recursos, timeouts, variables, logs y permisos mínimos para sus operaciones. **Verificación:** validación Terraform y ejecución controlada de cada Lambda, incluidos sus errores.
+- [x] **4.4. Crear Step Functions.** Ejecutar las tres ramas en paralelo y tratar reintentos y errores de manera que cada fallo sea identificable y no oculte los resultados de las demás. **Verificación:** ejecución con una rama fallida y otras satisfactorias, revisando el resultado completo.
+- [x] **4.5. Crear EventBridge Scheduler.** Configurar programación en `Europe/Madrid` y ejecución manual documentada. **Verificación:** una ejecución iniciada manualmente y otra iniciada por Scheduler; registrar fecha y resultado.
 - [ ] **4.6. Integrar el despliegue con P3.** Conectar módulos, estado, permisos OIDC y GitHub Actions acordados sin asumir que los permisos existentes cubren P1. **Verificación:** plan y validaciones de CI; despliegue reproducible según el procedimiento del equipo.
 
 ## 5. Validación y cierre de P1
 
 - [ ] **5.1. Ejecutar pruebas automatizadas.** Cubrir selectores y respaldos de las tres gestoras, normalización, clases, C1, manifiesto, hash, duplicados y fallos. **Verificación:** registrar comandos y resultados; los tests no deben depender de la disponibilidad de las webs.
-- [ ] **5.2. Verificar captura real de las tres fuentes.** Registrar fecha, cantidades, documentos ausentes y errores, sin dar por válidos datos de demostración. **Verificación:** contrastar manifiestos y muestras con S3 y con las páginas de origen.
+- [x] **5.2. Verificar captura real de las tres fuentes.** Registrar fecha, cantidades, documentos ausentes y errores, sin dar por válidos datos de demostración. **Verificación:** contrastar manifiestos y muestras con S3 y con las páginas de origen.
 - [ ] **5.3. Verificar repetición y aislamiento.** Repetir una captura y provocar un fallo controlado de una gestora. **Verificación:** no se crean duplicados lógicos según 0.3; las otras ramas terminan y el fallo queda visible.
 - [ ] **5.4. Verificar seguridad y operación.** Comprobar privacidad, cifrado, versionado, ausencia de credenciales en código, mínimo privilegio y trazabilidad en logs. **Verificación:** evidencia de configuración desplegada, no solo del código Terraform.
 - [ ] **5.5. Actualizar documentación.** Explicar arquitectura real, comandos locales y manuales, configuración, despliegue, rutas, manifiesto, errores, reejecución y límites conocidos. **Verificación:** otra persona puede seguir el procedimiento y entiende qué hace cada componente.
@@ -91,3 +91,7 @@ Revisión estática de [`webscrapper/descargar_kids_bestinver.py`](webscrapper/d
 - **Contrato C1 e idempotencia:** la ruta por defecto no incluye `raw/`; no se adjuntan gestora, tipo, fecha UTC, hash ni `correlation_id`. Se vuelve a hacer `put_object` en cada ejecución, sin deduplicación por contenido ni manifiesto persistente ([subida](webscrapper/descargar_kids_bestinver.py#L122), [clave](webscrapper/descargar_kids_bestinver.py#L182)). Faltan pruebas de metadatos, repetición, versiones y contenido modificado, una vez acordada su semántica con P2.
 - **Estado de ejecución:** los fallos parciales se imprimen pero no producen un resultado estructurado ni un código de salida explícito de fallo; una lista vacía tampoco se trata como error. Errores fuera de los tipos capturados pueden interrumpir el proceso ([script, ejecución](webscrapper/descargar_kids_bestinver.py#L163)). Faltan pruebas del estado final, lista vacía, fallos de página, subida y configuración.
 - **Cobertura actual:** la búsqueda en `tests/` y los workflows no encontró pruebas ni fixtures del scraper; las pruebas existentes cubren API y frontend. Tampoco hay pruebas de integración de ingesta con S3 ni validación de los selectores contra la web en esta revisión.
+
+**Evidencia de automatización (24-11-2026):** imagen ARM64 desplegada, tres Lambdas ejecutadas en la cuenta personal, definición validada con AWS, fallo paralelo controlado y ejecución Scheduler satisfactoria; detalles y procedimiento reproducible en [AUTOMATIZACION_P1.md](documentacion/AUTOMATIZACION_P1.md). El bucket compartido, la integración con P2/P3 y el estado remoto siguen pendientes.
+
+**Revisión del 24-11-2026:** `origin/main` en `9ab5074` ya era antecesor de esta rama. Prueba real opcional de repetición, cambio, distinta fecha y concurrencia: seis versiones leídas con sus hashes y limpiadas después; véase [la guía de automatización](documentacion/AUTOMATIZACION_P1.md#verificar-versiones-y-permisos-en-la-cuenta-de-pruebas). El bucket y los permisos concretos de escritura de los tres roles se comprobaron en AWS. Se añade un [ejemplo ficticio de evento S3](contracts/events/pdf_created.json). La deduplicación atómica y la integración efectiva siguen pendientes de P2; los recursos y permisos compartidos, de P3.

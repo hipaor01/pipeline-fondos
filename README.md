@@ -6,6 +6,8 @@ La primera etapa del pipeline descarga, mediante web scraping, los documentos de
 
 Para preparar un bucket de pruebas en una cuenta propia y entender las decisiones
 de captura, consulta la [guía AWS de captura](documentacion/GUIA_AWS_CAPTURA.md).
+La [guía de automatización P1](documentacion/AUTOMATIZACION_P1.md) describe el
+empaquetado y el despliegue de prueba con Lambda, Step Functions y Scheduler.
 
 ## Instalación
 
