@@ -6,7 +6,7 @@ Esta guía explica cómo está organizada la captura P1, qué decisiones se han 
 
 El 23 de noviembre de 2026 se inspeccionó una cuenta personal para reproducir y probar la configuración, distinta de la cuenta de la integración Terraform del compañero mencionada en los workflows del repositorio. **Antes de crear el bucket de prueba** se obtuvo una lista vacía de buckets S3 y, en `eu-west-3`, listas vacías de funciones Lambda, máquinas de Step Functions, colas SQS, schedules, repositorios ECR, API HTTP, clústeres ECS y clústeres Aurora. La cuenta sí tenía roles IAM ajenos al proyecto; no se inspeccionó ni alteró su contenido. No se puede concluir que otras regiones o servicios estén vacíos ni extraer conclusiones sobre la cuenta del compañero.
 
-El repositorio sí contiene Terraform para el backend de estado, la API, el bucket de artefactos y el frontend de **otro entorno**. Sus identificadores de cuenta y configuración de GitHub no deben copiarse tal cual a una cuenta nueva. No hay módulos implementados para las Lambdas de captura, Scheduler, Step Functions, SQS de procesamiento o el bucket de documentos. La arquitectura de `arquitectura_aws_pipeline_fondos.*` es una propuesta, no evidencia de despliegue.
+El repositorio sí contiene Terraform para el backend de estado, la API, el bucket de artefactos y el frontend de **otro entorno**. Sus identificadores de cuenta y configuración de GitHub no deben copiarse tal cual a una cuenta nueva. Las raíces `capture-registry` y `capture` ya gestionan ECR, Lambdas, Scheduler y Step Functions en la cuenta de pruebas. El bucket de documentos se incorpora como entrada y la cola de procesamiento no está implementada aquí. La arquitectura de `arquitectura_aws_pipeline_fondos.*` es una propuesta, no evidencia de despliegue.
 
 En una comprobación de lectura, el scraper encontró 24 enlaces de fondos en Bestinver. La web puede cambiar. Posteriormente se creó un bucket S3 de prueba en la cuenta personal y se realizaron las dos capturas descritas a continuación; no se configuraron notificaciones ni se tocaron recursos de la cuenta del compañero.
 
@@ -30,20 +30,21 @@ También se probó Cobas AM: se subieron 22 KID y 22 fichas de siete productos y
 ## Diseño y decisiones
 
 ```text
-Hoy, ejecutado localmente:
-  Bestinver / Azvalor / Cobas → scrapers Python → S3 versionado
+Probado con ejecución manual y programada en la cuenta personal:
+  Scheduler → Step Functions → scrapers Python → S3 versionado
                                ├─ raw/bestinver/FECHA/*_kid.pdf
                                ├─ raw/bestinver/FECHA/*_ficha_fondo.pdf
                                └─ manifests/bestinver/FECHA/.../*.json
 
-Futuro, todavía no implementado:
-  Scheduler → Step Functions → scrapers → S3 → SQS → procesamiento P2 → base de datos
+Frontera pendiente de integración:
+  S3 → SQS → procesamiento P2 → base de datos
 ```
 
 - **Ámbito:** hay scrapers para Bestinver, Azvalor y Cobas. La región prevista para el proyecto es `eu-west-3`; el día de las carpetas se calcula en `Europe/Madrid` y el instante de descarga se registra en UTC.
 - **Bucket de documentos:** separado del bucket que Terraform utiliza para su estado y del bucket de artefactos de despliegue. Su nombre se pasa con `--bucket`. Debe ser privado, estar cifrado y tener el versionado activado. La guía de abajo configura esto para una prueba; no lo añade al estado de Terraform.
 - **Claves:** `raw/{gestora}/{AAAAMMDD}/{slug}_{tipo}.pdf`, con tipos `kid` y `ficha_fondo`. `raw/` y `manifests/` son prefijos de objetos, no carpetas que haya que crear previamente. La salida histórica `bestinver/..._datos_fundamentales.pdf` no se migra automáticamente.
 - **Metadatos de cada PDF:** `gestora`, `tipo-documento`, `url-origen`, `fecha-descarga-utc`, `sha256` y `correlation-id`, además de `Content-Type: application/pdf`. El hash corresponde a los bytes descargados. Las subidas y sus versiones se registran en el manifiesto.
+- **Ausencias:** las fichas ausentes se registran sin convertir por sí solas una ejecución en fallo; un KID ausente individual se registra como ausencia en Bestinver y Azvalor y como fallo en Cobas. Si no se descubre ningún KID, las tres gestoras registran un fallo. Una ejecución completa no garantiza que todos los productos publiquen todos los documentos.
 - **Trazabilidad y errores:** el scraper acepta `--correlation-id` o genera uno. El manifiesto JSON se guarda fuera de `raw/`, por intento, con estado, subidas, ausencias y fallos. El segmento de ejecución en la clave del manifiesto es un hash del identificador de correlación; el identificador original aparece en el JSON.
 - **Repeticiones:** se puede volver a subir la misma clave y contenido, generando otra versión y potencialmente otro evento. P1 calcula el hash pero **no deduplica globalmente**; se propone que P2 imponga la unicidad lógica de forma transaccional y conserve las procedencias. P2 aún no está implementado.
 - **Fichas y eventos futuros:** se propone que P2 procese solo claves terminadas en `_kid.pdf`. No hay notificaciones S3 ni colas configuradas por estos comandos. La configuración de notificaciones es única por bucket y debe tener un solo propietario: reemplazarla sin integrar las reglas existentes puede eliminarlas.
@@ -151,7 +152,7 @@ Para revisar el manifiesto, seleccionar su clave de `list-objects-v2` y descarga
 ## 4. Qué falta para reproducir el proyecto completo
 
 1. Definir mediante Terraform el almacenamiento de documentos o acordar la incorporación de uno ya existente; esta guía AWS CLI crea recursos fuera del estado Terraform y **no debe aplicarse Terraform sobre ellos sin planificar su importación o transición**.
-2. Implementar las imágenes y Lambdas de captura, Step Functions y Scheduler; comprobar qué infraestructura existe antes de crear recursos compartidos.
+2. Integrar las imágenes y Lambdas de captura, Step Functions y Scheduler ya probados con la infraestructura del entorno compartido.
 3. Implementar P2: SQS/DLQ, consumidor, lectura de la versión exacta, procesamiento y base de datos con unicidad transaccional. Definir las notificaciones del bucket una sola vez y conservar las existentes.
 4. Adaptar bootstrap OIDC, estados y workflows a la cuenta y repositorio de destino. Las variables de cuenta y ARN de los workflows actuales pertenecen al entorno del proyecto original; la creación del bucket de prueba no los cambia.
 5. Acordar retención de versiones y manifiestos, permisos mínimos y cómo recuperar una ejecución interrumpida. Antes de eliminar un bucket versionado hay que considerar **todas las versiones y delete markers**, no solo los objetos actuales; esta guía no borra datos automáticamente.

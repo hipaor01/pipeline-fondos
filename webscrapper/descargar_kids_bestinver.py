@@ -132,6 +132,8 @@ class ScraperBestinver:
                     self.ausentes.append(Incidencia("ausente", "Documento no encontrado", nombre, tipo, url))
                     continue
                 documentos.append(Documento("bestinver", slug, tipo, encontrados[sufijo], nombre))
+        if fondos and not any(documento.tipo == "kid" for documento in documentos):
+            self.fallos.append(Incidencia("listado", "No se encontraron documentos KID", url=BASE_URL))
         return documentos
 
 def main() -> int:

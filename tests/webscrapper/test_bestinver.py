@@ -69,6 +69,27 @@ def test_fallbacks_y_documento_ausente() -> None:
     assert [d.tipo for d in documentos] == ["kid"]
 
 
+def test_solo_fichas_no_se_considera_captura_completa() -> None:
+    session = Mock()
+    session.get.side_effect = [
+        respuesta('<footer><a href="/fondos-de-inversion/uno/">Uno</a></footer>'),
+        respuesta('<main><a href="/ficha.pdf">Ficha del fondo</a></main>'),
+        respuesta(pdf_valido()),
+    ]
+    s3 = Mock()
+    s3.get_bucket_versioning.return_value = {"Status": "Enabled"}
+    s3.put_object.return_value = {"VersionId": "v1"}
+    with (
+        patch("webscrapper.ingesta.requests.Session", return_value=session),
+        patch("webscrapper.ingesta.boto3.client", return_value=s3),
+    ):
+        resultado = ejecutar(SimpleNamespace(fecha="20261122", prefijo="bestinver", bucket="prueba", delay=0))
+    assert resultado.estado == "parcial"
+    assert [subida.documento.tipo for subida in resultado.subidos] == ["ficha_fondo"]
+    assert any(fallo.mensaje == "No se encontraron documentos KID" for fallo in resultado.fallos)
+    assert json.loads(s3.put_object.call_args_list[-1].kwargs["Body"])["estado"] == "parcial"
+
+
 def test_error_de_un_fondo_no_oculta_los_demas() -> None:
     session = Mock()
     session.get.side_effect = [

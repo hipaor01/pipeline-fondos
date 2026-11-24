@@ -18,7 +18,7 @@ Este plan desarrolla las responsabilidades de P1 del [reparto de tareas](output/
 - [x] **1.3. Validar las descargas.** Gestionar tiempos de espera y errores HTTP, respuestas vacías o que no sean PDF, enlaces repetidos y nombres de destino que puedan colisionar. Mantener una pausa razonable entre peticiones. **Verificación:** pruebas con respuestas controladas, incluidas páginas de error devueltas como HTTP 200.
 - [x] **1.4. Propagar trazabilidad.** Crear o recibir un `correlation_id` por ejecución y asociarlo a gestora, documento, logs y metadatos según C1. **Verificación:** un identificador permite relacionar el resultado de ejecución con el objeto y sus registros.
 - [x] **1.5. Implementar C1 en S3.** Construir la clave acordada, calcular SHA-256 del contenido antes de subir y adjuntar los metadatos y tipo de contenido requeridos. **Verificación:** pruebas de claves y metadatos y comprobación de un objeto real en un entorno de prueba acordado.
-- [ ] **1.6. Implementar la política de duplicados.** Aplicar las decisiones de 0.3 sin confundir sobrescritura de una clave con ausencia de duplicados lógicos. **Verificación:** pruebas de repetición, cambio de contenido, fechas distintas, reintento y concurrencia según el diseño acordado.
+- [x] **1.6. Aplicar en P1 la política de versiones y duplicados.** Conservar cada subida con su versión y hash; no afirmar que P1 deduplica lógicamente. **Verificación:** repetición, cambio, fechas y concurrencia comprobados en S3 real; la deduplicación lógica de P2 y su aceptación conjunta siguen abiertas en 0.3 y 2.2.
 - [x] **1.7. Generar el manifiesto.** Registrar por ejecución documentos detectados, subidos, omitidos y fallidos; incluir referencias, huella y motivo cuando proceda. **Verificación:** reconciliar el manifiesto con una ejecución de prueba y los objetos creados.
 - [x] **1.8. Comunicar resultados y fallos.** Distinguir éxito, fallo parcial y fallo total por gestora; conservar información suficiente para detectar documentos pendientes. **Verificación:** pruebas de fallo de listado, página, descarga y subida, y comprobación de que el resultado final refleja el fallo.
 
@@ -47,7 +47,7 @@ Este plan desarrolla las responsabilidades de P1 del [reparto de tareas](output/
 
 ## 5. Validación y cierre de P1
 
-- [ ] **5.1. Ejecutar pruebas automatizadas.** Cubrir selectores y respaldos de las tres gestoras, normalización, clases, C1, manifiesto, hash, duplicados y fallos. **Verificación:** registrar comandos y resultados; los tests no deben depender de la disponibilidad de las webs.
+- [x] **5.1. Ejecutar pruebas automatizadas de P1.** Cubrir selectores y respaldos de las tres gestoras, normalización, clases, C1, manifiesto, hash, repetición física y fallos. **Verificación:** suite local sin depender de las webs y prueba S3 real optativa; la deduplicación lógica de P2 no queda cubierta por esta casilla.
 - [x] **5.2. Verificar captura real de las tres fuentes.** Registrar fecha, cantidades, documentos ausentes y errores, sin dar por válidos datos de demostración. **Verificación:** contrastar manifiestos y muestras con S3 y con las páginas de origen.
 - [ ] **5.3. Verificar repetición y aislamiento.** Repetir una captura y provocar un fallo controlado de una gestora. **Verificación:** no se crean duplicados lógicos según 0.3; las otras ramas terminan y el fallo queda visible.
 - [ ] **5.4. Verificar seguridad y operación.** Comprobar privacidad, cifrado, versionado, ausencia de credenciales en código, mínimo privilegio y trazabilidad en logs. **Verificación:** evidencia de configuración desplegada, no solo del código Terraform.
@@ -71,6 +71,20 @@ Este plan desarrolla las responsabilidades de P1 del [reparto de tareas](output/
 | 2026-11-23 | 1.3–1.8, 2.1 | [Prueba real en AWS](documentacion/GUIA_AWS_CAPTURA.md#resultado-de-la-prueba-real-del-23-de-noviembre): 36 subidas en ejecución parcial y 37 en ejecución completa; verificados hashes, metadatos y versiones. Commits `d27362d` y `4874e73` corrigen codificación, selector y PDF recuperable. | 1.6 sigue abierta: no se ha probado deduplicación lógica ni concurrencia real con P2. 2.2 requiere el consumidor P2. |
 | 2026-11-23 | 3.1 y 3.2 | [Estudio y prueba de Azvalor](documentacion/CAPTURA_AZVALOR.md): 11 productos, 11 KID y 10 fichas; 21 versiones comprobadas en S3. | `robots.txt` respondió 418; no se pudieron verificar sus reglas. Eventos y deduplicación lógica pendientes de P2. |
 | 2026-11-23 | 3.3 y 3.4 | [Estudio y prueba de Cobas](documentacion/CAPTURA_COBAS.md): siete productos y 22 clases o productos, 44 versiones comprobadas en S3 y 22 ISIN contrastados con sus KID. | Eventos, deduplicación lógica y extracción posterior pendientes de P2. |
+
+## Revisión de P1 antes del PR
+
+| Criterio | Evidencia | Límite o tarea pendiente |
+| --- | --- | --- |
+| Descubrimiento y captura | Fixtures y tests en `tests/webscrapper/`; [Azvalor](documentacion/CAPTURA_AZVALOR.md), [Cobas](documentacion/CAPTURA_COBAS.md) y [Bestinver](documentacion/GUIA_AWS_CAPTURA.md#resultado-de-la-prueba-real-del-23-de-noviembre). | Las páginas y documentos de origen pueden cambiar. |
+| Integridad y entrega | Claves, metadatos, SHA-256 y versiones verificados en la cuenta personal; [C1](contracts/C1_PROPUESTA.md) incluye el [evento de ejemplo](contracts/events/pdf_created.json). | Falta probar el consumidor y la cuenta compartida con P2/P3. |
+| Repetición y errores | `test_idempotencia.py`, `test_s3_real.py`, tests de fallo y prueba real de ramas aisladas en [automatización](documentacion/AUTOMATIZACION_P1.md). | P1 conserva versiones físicas; la deduplicación transaccional corresponde a P2. |
+| Orquestación y operación | Imagen ARM64, Lambdas, Step Functions, Scheduler y permisos ensayados en AWS personal; comandos de reproducción en la [guía](documentacion/AUTOMATIZACION_P1.md). | El schedule diario está desactivado; estado remoto, OIDC y recursos compartidos requieren integración de equipo. |
+| Seguridad | Bloqueo público, cifrado, versionado y simulaciones de escritura por gestora documentados en la guía. | No equivale a auditoría integral ni confirma las políticas del entorno compartido. |
+
+Los criterios 0.2–0.4, 2.2–2.3, 4.1, 4.6 y 5.3–5.6 conservan sus dependencias de aceptación o entorno compartido; no se cierran por la prueba personal.
+
+Comprobación del 24-11-2026: `pytest` con S3 real, **125 pruebas y 38 subpruebas**, más Ruff y validación/test de Terraform. Tras corregir el caso sin KID de Bestinver, se actualizó la imagen de las tres Lambdas en la cuenta personal y se invocó Bestinver: 37 subidos, 11 ausentes, 0 fallos; se verificaron manifiesto, versiones, hashes y correlación. El caso sintético sin KID está cubierto por un test local, no se ha provocado en las fuentes reales.
 
 ## Evidencia 0.1: inventario de Bestinver
 

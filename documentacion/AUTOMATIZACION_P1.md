@@ -144,6 +144,8 @@ Para comprobar el aislamiento, se creó una máquina temporal con la misma defin
 
 Se probó además, de forma aislada, un filtro nativo S3 → SQS con prefijo temporal `raw/p1-event-test/` y sufijo `_kid.pdf`: llegó un evento para el KID con el `VersionId` correcto y no se observó evento para la ficha durante 35 segundos. Se verificó la versión mediante `GetObject`, su contenido, hash y tipo. La prueba usó una cola temporal con política restringida al bucket y a la cuenta; después se eliminaron las versiones de prueba y la cola, y se restauró la configuración vacía anterior de notificaciones. S3 puede entregar eventos duplicados o tardíos; esta observación no demuestra entrega exactamente una vez. P2 deberá implementar y probar su consumidor, su idempotencia y la configuración definitiva de notificaciones junto con P3.
 
+En la revisión posterior del mismo día se reconstruyó la imagen con la corrección para detectar una captura de Bestinver sin ningún KID. Un plan Terraform actualizó únicamente las tres Lambdas; una invocación real de Bestinver registró 37 subidos, 11 ausentes y ningún fallo, con las 37 versiones reconciliadas por hash y `correlation_id`. El caso sin KID se probó con respuestas controladas localmente.
+
 Las ejecuciones reales crean versiones adicionales en S3 y consumen servicios de AWS. El estado local de Terraform no se debe borrar ni subir a Git; su migración a estado remoto compartido y la integración de despliegue/OIDC siguen pendientes. La validación de CI está configurada en el repositorio, pero aún no se ha ejecutado en GitHub para estos cambios.
 
 ## Repetir la prueba aislada de eventos S3
