@@ -13,3 +13,7 @@ output "scheduler_role_arn" {
 output "schedule_name" {
   value = aws_scheduler_schedule.daily.name
 }
+
+output "scheduler_failures_queue_url" {
+  value = aws_sqs_queue.scheduler_failures.url
+}

@@ -36,6 +36,17 @@ variable "retained_image_count" {
   }
 }
 
+variable "expirable_tag_prefix" {
+  description = "Si se indica, solo las imágenes con este prefijo pueden expirar."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.expirable_tag_prefix == null ? true : can(regex("^[a-zA-Z0-9][a-zA-Z0-9_.-]*$", var.expirable_tag_prefix))
+    error_message = "expirable_tag_prefix debe ser un prefijo de etiqueta ECR no vacío."
+  }
+}
+
 variable "additional_tags" {
   description = "Etiquetas adicionales del repositorio."
   type        = map(string)

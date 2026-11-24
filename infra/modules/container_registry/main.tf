@@ -43,11 +43,13 @@ resource "aws_ecr_lifecycle_policy" "this" {
       {
         rulePriority = 1
         description  = "Conservar las últimas ${var.retained_image_count} imágenes"
-        selection = {
-          tagStatus   = "any"
+        selection = merge({
+          tagStatus   = var.expirable_tag_prefix == null ? "any" : "tagged"
           countType   = "imageCountMoreThan"
           countNumber = var.retained_image_count
-        }
+          }, var.expirable_tag_prefix == null ? {} : {
+          tagPrefixList = [var.expirable_tag_prefix]
+        })
         action = {
           type = "expire"
         }

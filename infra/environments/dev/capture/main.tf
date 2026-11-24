@@ -166,9 +166,32 @@ resource "aws_iam_role" "scheduler" {
 
 resource "aws_iam_role_policy" "scheduler" {
   role = aws_iam_role.scheduler.id
-  policy = jsonencode({ Version = "2012-10-17", Statement = [{
-    Effect = "Allow", Action = ["states:StartExecution"], Resource = [aws_sfn_state_machine.capture.arn]
-  }] })
+  policy = jsonencode({ Version = "2012-10-17", Statement = [
+    { Effect = "Allow", Action = ["states:StartExecution"], Resource = [aws_sfn_state_machine.capture.arn] },
+    { Effect = "Allow", Action = ["sqs:SendMessage"], Resource = [aws_sqs_queue.scheduler_failures.arn] }
+  ] })
+}
+
+resource "aws_sqs_queue" "scheduler_failures" {
+  name                      = "${local.name}-scheduler-failures"
+  message_retention_seconds = 1209600
+  sqs_managed_sse_enabled   = true
+  tags                      = local.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "scheduler_failures" {
+  alarm_name          = "${local.name}-scheduler-failures"
+  alarm_description   = "Scheduler no pudo iniciar una captura; revisar la cola de errores."
+  namespace           = "AWS/SQS"
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  statistic           = "Maximum"
+  period              = 60
+  evaluation_periods  = 1
+  threshold           = 0
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+  dimensions          = { QueueName = aws_sqs_queue.scheduler_failures.name }
+  tags                = local.tags
 }
 
 resource "aws_scheduler_schedule" "daily" {
@@ -181,6 +204,9 @@ resource "aws_scheduler_schedule" "daily" {
     arn      = aws_sfn_state_machine.capture.arn
     role_arn = aws_iam_role.scheduler.arn
     input    = "{}"
+    dead_letter_config {
+      arn = aws_sqs_queue.scheduler_failures.arn
+    }
     retry_policy {
       maximum_event_age_in_seconds = 60
       maximum_retry_attempts       = 0

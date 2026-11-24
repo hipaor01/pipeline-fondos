@@ -17,6 +17,9 @@ mock_provider "aws" {
   mock_resource "aws_sfn_state_machine" {
     defaults = { arn = "arn:aws:states:eu-west-3:123456789012:stateMachine:test" }
   }
+  mock_resource "aws_sqs_queue" {
+    defaults = { arn = "arn:aws:sqs:eu-west-3:123456789012:capture-failures" }
+  }
 }
 
 run "captura_completa" {
@@ -28,6 +31,17 @@ run "captura_completa" {
   assert {
     condition     = length(aws_lambda_function.scraper) == 3 && aws_scheduler_schedule.daily.state == "DISABLED"
     error_message = "Deben existir tres Lambdas y el horario debe empezar desactivado."
+  }
+  assert {
+    condition = (
+      aws_scheduler_schedule.daily.target[0].dead_letter_config[0].arn == aws_sqs_queue.scheduler_failures.arn &&
+      aws_scheduler_schedule.daily.target[0].retry_policy[0].maximum_retry_attempts == 0 &&
+      aws_sqs_queue.scheduler_failures.message_retention_seconds == 1209600 &&
+      aws_sqs_queue.scheduler_failures.sqs_managed_sse_enabled &&
+      aws_cloudwatch_metric_alarm.scheduler_failures.dimensions.QueueName == aws_sqs_queue.scheduler_failures.name &&
+      length([for statement in jsondecode(aws_iam_role_policy.scheduler.policy).Statement : statement if statement.Action == ["sqs:SendMessage"] && statement.Resource == [aws_sqs_queue.scheduler_failures.arn]]) == 1
+    )
+    error_message = "Scheduler debe enviar fallos a su propia cola cifrada, con permiso acotado y alarma."
   }
   assert {
     condition     = length(jsondecode(aws_sfn_state_machine.capture.definition).States.Capturar.Branches) == 3

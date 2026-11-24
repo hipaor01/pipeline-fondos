@@ -23,11 +23,12 @@ provider "aws" {
 }
 
 module "registry" {
-  source          = "../../../modules/container_registry"
-  repository_name = "${var.project_name}-dev-capture-scraper"
-  project_name    = var.project_name
-  environment     = "dev"
-  component       = "capture"
+  source               = "../../../modules/container_registry"
+  repository_name      = "${var.project_name}-dev-capture-scraper"
+  project_name         = var.project_name
+  environment          = "dev"
+  component            = "capture"
+  expirable_tag_prefix = "desechable-"
 }
 
 output "repository_url" {
