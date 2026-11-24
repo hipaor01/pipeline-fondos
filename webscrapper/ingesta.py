@@ -70,7 +70,7 @@ def descargar(session: requests.Session, url: str) -> bytes:
     try:
         if not PdfReader(io.BytesIO(resp.content), strict=False).pages:
             raise ValueError("El PDF no contiene páginas.")
-    except (PdfReadError, OSError, ValueError) as error:
+    except (PdfReadError, OSError, ValueError, OverflowError) as error:
         raise ValueError("La respuesta no contiene un PDF legible.") from error
     return resp.content
 

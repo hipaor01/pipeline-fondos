@@ -22,7 +22,7 @@ Uso:
 import argparse
 import sys
 import time
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlunparse
 
 import requests
 
@@ -64,9 +64,12 @@ def obtener_fondos(session: requests.Session) -> list[tuple[str, str]]:
         for a in enlaces:
             url = urljoin(BASE_URL, a.get("href"))
             nombre = " ".join(a.text_content().split())
-            partes = [p for p in urlparse(url).path.split("/") if p]
-            if len(partes) != 2 or partes[0] != "fondos-de-inversion":
+            destino = urlparse(url)
+            partes = [p for p in destino.path.split("/") if p]
+            if (destino.scheme != "https" or destino.hostname != urlparse(BASE_URL).hostname
+                    or len(partes) != 2 or partes[0] != "fondos-de-inversion"):
                 continue
+            url = urlunparse((destino.scheme, destino.netloc, destino.path.rstrip("/") + "/", "", "", ""))
             if url not in vistos:
                 vistos.add(url)
                 fondos.append((nombre, url))

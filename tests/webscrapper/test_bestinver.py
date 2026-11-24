@@ -18,6 +18,7 @@ from webscrapper.descargar_kids_bestinver import (
     ScraperBestinver,
     ejecutar,
     main,
+    obtener_fondos,
 )
 from webscrapper.ingesta import descargar
 
@@ -55,6 +56,17 @@ def test_descubre_fondo_y_documentos_con_selectores_principales(capsys) -> None:
     assert session.get.call_count == 2
     assert session.get.call_args_list[0].args[0] == BASE_URL
     assert "usando respaldo" not in capsys.readouterr().out
+
+
+def test_listado_solo_acepta_fondos_del_origen_y_normaliza_url() -> None:
+    session = Mock()
+    session.get.return_value = respuesta(
+        '<footer><a href="https://otro.test/fondos-de-inversion/falso/">Falso</a>'
+        '<a href="http://www.bestinver.es/fondos-de-inversion/inseguro/">Inseguro</a>'
+        '<a href="/fondos-de-inversion/uno?ref=x">Uno</a>'
+        '<a href="/fondos-de-inversion/uno/#seccion">Uno repetido</a></footer>'
+    )
+    assert obtener_fondos(session) == [("Uno", "https://www.bestinver.es/fondos-de-inversion/uno/")]
 
 
 def test_fallbacks_y_documento_ausente() -> None:
@@ -287,7 +299,7 @@ def test_cli_conserva_las_claves_y_metadatos_de_las_subidas(capsys) -> None:
 
 
 def test_rechaza_respuestas_vacias_y_html() -> None:
-    for contenido in ("", "<html>error</html>", "%PDF-1.4\nincompleto"):
+    for contenido in ("", "<html>error</html>", "%PDF-1.4\nincompleto", b"%PDF-1.4\nstartxref\n999999999999999999999999999999\n%%EOF"):
         session = Mock()
         session.get.return_value = respuesta(contenido)
         try:
@@ -350,6 +362,28 @@ def test_resultado_parcial_identifica_documento_que_fallo() -> None:
     manifiesto = json.loads(s3.put_object.call_args_list[-1].kwargs["Body"])
     assert manifiesto["estado"] == "parcial"
     assert manifiesto["fallos"][0]["etapa"] == "descarga"
+
+
+def test_pdf_con_indice_fuera_de_rango_no_impide_otros_documentos() -> None:
+    session, s3 = Mock(), Mock()
+    session.get.side_effect = [
+        respuesta((FIXTURES / "listado.html").read_text()),
+        respuesta((FIXTURES / "fondo.html").read_text()),
+        respuesta(b"%PDF-1.4\nstartxref\n999999999999999999999999999999\n%%EOF"),
+        respuesta(pdf_valido()),
+    ]
+    s3.get_bucket_versioning.return_value = {"Status": "Enabled"}
+    s3.put_object.return_value = {"VersionId": "v1"}
+    with (
+        patch("webscrapper.ingesta.requests.Session", return_value=session),
+        patch("webscrapper.ingesta.boto3.client", return_value=s3),
+    ):
+        resultado = ejecutar(SimpleNamespace(fecha="20261122", prefijo="bestinver", bucket="prueba", delay=0))
+    assert resultado.estado == "parcial"
+    assert [x.documento.tipo for x in resultado.subidos] == ["ficha_fondo"]
+    assert [(x.etapa, x.tipo) for x in resultado.fallos] == [("descarga", "kid")]
+    manifiesto = json.loads(s3.put_object.call_args_list[-1].kwargs["Body"])
+    assert manifiesto["estado"] == "parcial" and manifiesto["fallos"][0]["etapa"] == "descarga"
 
 
 def test_error_de_listado_o_bucket_produce_estado_fallido() -> None:

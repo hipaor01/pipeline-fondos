@@ -69,7 +69,7 @@ Las páginas son HTML estático (no necesitan JavaScript), así que basta con `r
 
 ### Qué hace el script
 
-1. Extrae los enlaces del footer. Si una página sin documentos enlaza a productos bajo su propia ruta, sigue esos enlaces como categoría y procesa cada producto una sola vez.
+1. Extrae los enlaces HTTPS del dominio de Bestinver desde el footer. Si una página sin documentos enlaza a productos bajo su propia ruta, sigue esos enlaces como categoría y procesa cada producto una sola vez.
 2. Para cada fondo, abre su página y busca los enlaces cuyo texto normalizado es `datos fundamentales` o `ficha del fondo`. Si aparecen dos URLs distintas del mismo tipo, registra la ambigüedad sin elegir una.
 3. Comprueba al inicio que el bucket es accesible (si no, termina con error).
 4. Descarga cada PDF en memoria y lo sube a S3 con `ContentType: application/pdf` y metadatos de procedencia, fecha UTC, SHA-256 y correlación. Si se relanza el mismo día, se escribe la misma clave; con versionado activo se crea una nueva versión.
