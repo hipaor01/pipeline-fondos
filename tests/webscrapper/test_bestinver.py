@@ -69,6 +69,45 @@ def test_fallbacks_y_documento_ausente() -> None:
     assert [d.tipo for d in documentos] == ["kid"]
 
 
+def test_respaldo_si_lista_principal_existe_pero_no_contiene_fondos() -> None:
+    session = Mock()
+    principal = (FIXTURES / "listado.html").read_text()
+    principal = principal.replace(
+        '<a href="/fondos-de-inversion/bestinfond/">Bestinfond España</a>',
+        '<a href="/otra-ruta/">Enlace no válido</a>',
+    ).replace('<li><a href="/fondos-de-inversion/bestinfond/">Bestinfond repetido</a></li>', '')
+    principal = principal.replace('</footer>', '<a href="/fondos-de-inversion/uno/">Uno</a></footer>')
+    session.get.side_effect = [respuesta(principal), respuesta('<main><a href="/kid.pdf">Datos fundamentales</a></main>')]
+    assert [d.slug for d in ScraperBestinver(session, delay=0).descubrir()] == ["uno"]
+
+
+def test_respaldo_completa_kid_fuera_del_bloque_principal() -> None:
+    session = Mock()
+    fondo = (FIXTURES / "fondo.html").read_text().replace(
+        '<li><a href="/bestinfond-kid.pdf">Datos fundamentales</a></li>', ''
+    ).replace('</main>', '<a href="/nuevo-kid.pdf">Datos fundamentales</a></main>')
+    session.get.side_effect = [respuesta((FIXTURES / "listado.html").read_text()), respuesta(fondo)]
+    scraper = ScraperBestinver(session, delay=0)
+    docs = scraper.descubrir()
+    assert {d.tipo: d.url for d in docs} == {
+        "kid": "https://www.bestinver.es/nuevo-kid.pdf",
+        "ficha_fondo": "https://www.bestinver.es/bestinfond-ficha.pdf",
+    }
+    assert not scraper.fallos
+
+
+def test_respaldo_si_bloque_principal_de_documentos_esta_vacio() -> None:
+    session = Mock()
+    fondo = (FIXTURES / "fondo.html").read_text()
+    fondo = fondo.replace('<li><a href="/bestinfond-kid.pdf">Datos fundamentales</a></li>', '')
+    fondo = fondo.replace('<li><a href="/bestinfond-ficha.pdf">Ficha del fondo</a></li>', '')
+    fondo = fondo.replace('</main>', '<a href="/kid.pdf">Datos fundamentales</a></main>')
+    session.get.side_effect = [respuesta((FIXTURES / "listado.html").read_text()), respuesta(fondo)]
+    scraper = ScraperBestinver(session, delay=0)
+    assert [d.tipo for d in scraper.descubrir()] == ["kid"]
+    assert not scraper.fallos
+
+
 def test_solo_fichas_no_se_considera_captura_completa() -> None:
     session = Mock()
     session.get.side_effect = [
@@ -88,6 +127,110 @@ def test_solo_fichas_no_se_considera_captura_completa() -> None:
     assert [subida.documento.tipo for subida in resultado.subidos] == ["ficha_fondo"]
     assert any(fallo.mensaje == "No se encontraron documentos KID" for fallo in resultado.fallos)
     assert json.loads(s3.put_object.call_args_list[-1].kwargs["Body"])["estado"] == "parcial"
+
+
+def test_html_vacio_en_fondo_no_impide_otros_y_deja_manifiesto() -> None:
+    session, s3 = Mock(), Mock()
+    session.get.side_effect = [
+        respuesta('<footer><a href="/fondos-de-inversion/uno/">Uno</a><a href="/fondos-de-inversion/dos/">Dos</a></footer>'),
+        respuesta(''),
+        respuesta('<main><a href="/kid.pdf">Datos fundamentales</a></main>'),
+        respuesta(pdf_valido()),
+    ]
+    s3.get_bucket_versioning.return_value = {"Status": "Enabled"}
+    s3.put_object.return_value = {"VersionId": "v1"}
+    with (
+        patch("webscrapper.ingesta.requests.Session", return_value=session),
+        patch("webscrapper.ingesta.boto3.client", return_value=s3),
+    ):
+        resultado = ejecutar(SimpleNamespace(fecha="20261122", prefijo="bestinver", bucket="prueba", delay=0))
+    assert resultado.estado == "parcial"
+    assert [x.documento.slug for x in resultado.subidos] == ["dos"]
+    assert [(x.etapa, x.fondo) for x in resultado.fallos] == [("pagina", "Uno")]
+    manifiesto = json.loads(s3.put_object.call_args_list[-1].kwargs["Body"])
+    assert manifiesto["estado"] == "parcial" and manifiesto["fallos"][0]["etapa"] == "pagina"
+
+
+def test_html_vacio_en_listado_deja_manifiesto_fallido() -> None:
+    session, s3 = Mock(), Mock()
+    session.get.return_value = respuesta('')
+    s3.get_bucket_versioning.return_value = {"Status": "Enabled"}
+    s3.put_object.return_value = {"VersionId": "v1"}
+    with (
+        patch("webscrapper.ingesta.requests.Session", return_value=session),
+        patch("webscrapper.ingesta.boto3.client", return_value=s3),
+    ):
+        resultado = ejecutar(SimpleNamespace(fecha="20261122", prefijo="bestinver", bucket="prueba", delay=0))
+    assert resultado.estado == "fallida" and resultado.fallos[0].etapa == "listado"
+    assert json.loads(s3.put_object.call_args.kwargs["Body"])["estado"] == "fallida"
+
+
+def test_kid_ausente_en_un_fondo_no_se_oculta_por_los_demas() -> None:
+    session, s3 = Mock(), Mock()
+    session.get.side_effect = [
+        respuesta('<footer><a href="/fondos-de-inversion/uno/">Uno</a><a href="/fondos-de-inversion/dos/">Dos</a></footer>'),
+        respuesta('<main><a href="/kid.pdf">Datos fundamentales</a></main>'),
+        respuesta('<main><a href="/ficha.pdf">Ficha del fondo</a></main>'),
+        respuesta(pdf_valido()), respuesta(pdf_valido()),
+    ]
+    s3.get_bucket_versioning.return_value = {"Status": "Enabled"}
+    s3.put_object.return_value = {"VersionId": "v1"}
+    with (
+        patch("webscrapper.ingesta.requests.Session", return_value=session),
+        patch("webscrapper.ingesta.boto3.client", return_value=s3),
+    ):
+        resultado = ejecutar(SimpleNamespace(fecha="20261122", prefijo="bestinver", bucket="prueba", delay=0))
+    assert resultado.estado == "parcial"
+    assert [(f.etapa, f.fondo) for f in resultado.fallos] == [("kid_ausente", "Dos")]
+    manifiesto = json.loads(s3.put_object.call_args_list[-1].kwargs["Body"])
+    assert manifiesto["estado"] == "parcial" and manifiesto["fallos"][0]["tipo"] == "kid"
+
+
+def test_enlaces_ambiguos_no_se_eligen_y_otros_tipos_se_conservan() -> None:
+    session = Mock()
+    session.get.side_effect = [
+        respuesta('<footer><a href="/fondos-de-inversion/uno/">Uno</a></footer>'),
+        respuesta('<main><a href="/a.pdf">Datos fundamentales</a><a href="/b.pdf">Datos fundamentales</a><a href="/ficha.pdf">Ficha del fondo</a></main>'),
+    ]
+    scraper = ScraperBestinver(session, delay=0)
+    docs = scraper.descubrir()
+    assert [(d.tipo, d.url) for d in docs] == [("ficha_fondo", "https://www.bestinver.es/ficha.pdf")]
+    assert any(f.etapa == "documentos_ambiguos" and f.tipo == "kid" for f in scraper.fallos)
+
+
+def test_enlaces_repetidos_del_mismo_documento_no_son_ambiguos() -> None:
+    session = Mock()
+    session.get.side_effect = [
+        respuesta('<footer><a href="/fondos-de-inversion/uno/">Uno</a></footer>'),
+        respuesta('<main><a href="/a.pdf">Datos fundamentales</a><a href="/a.pdf">Datos fundamentales</a></main>'),
+    ]
+    scraper = ScraperBestinver(session, delay=0)
+    assert [d.tipo for d in scraper.descubrir()] == ["kid"]
+    assert not scraper.fallos
+
+
+def test_categoria_descubre_fondos_hijos_y_evitan_enlaces_externos() -> None:
+    session = Mock()
+    session.get.side_effect = [
+        respuesta('<footer><a href="/fondos-de-inversion/otros/">Otros</a></footer>'),
+        respuesta('<main><a href="/fondos-de-inversion/otros/uno/">Uno</a><a href="/fondos-de-inversion/otros/uno/">Ver producto</a><a href="https://otro.test/fondos-de-inversion/otros/falso/">Falso</a><a href="/fondos-de-inversion/otros/folleto.pdf">Folleto</a></main>'),
+        respuesta('<main><a href="/kid.pdf">Datos fundamentales</a></main>'),
+    ]
+    scraper = ScraperBestinver(session, delay=0)
+    assert [(d.slug, d.tipo) for d in scraper.descubrir()] == [("uno", "kid")]
+    assert not scraper.fallos
+    assert len(session.get.call_args_list) == 3
+
+
+def test_pagina_sin_documentos_ni_productos_sigue_siendo_fallo() -> None:
+    session = Mock()
+    session.get.side_effect = [
+        respuesta('<footer><a href="/fondos-de-inversion/uno/">Uno</a></footer>'),
+        respuesta('<main><h1>Uno</h1></main>'),
+    ]
+    scraper = ScraperBestinver(session, delay=0)
+    assert scraper.descubrir() == []
+    assert any(f.etapa == "kid_ausente" for f in scraper.fallos)
 
 
 def test_error_de_un_fondo_no_oculta_los_demas() -> None:

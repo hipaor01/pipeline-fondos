@@ -60,6 +60,19 @@ def test_respaldo_deduplica_enlaces_e_identifica_ficha_ausente() -> None:
     assert not scraper.fallos
 
 
+def test_kid_ausente_de_un_producto_es_un_fallo() -> None:
+    session = Mock()
+    session.get.side_effect = [
+        respuesta('<a href="/fondos-de-inversion/uno/">Uno</a><a href="/fondos-de-inversion/dos/">Dos</a>'),
+        respuesta('<a href="/kid.pdf">Folleto simplificado (DFP)</a>'),
+        respuesta('<a href="/ficha.pdf">Ficha del producto</a>'),
+    ]
+    scraper = ScraperAzvalor(session, delay=0)
+    docs = scraper.descubrir()
+    assert [(d.slug, d.tipo) for d in docs] == [("uno", "kid"), ("dos", "ficha_fondo")]
+    assert [(f.etapa, f.fondo) for f in scraper.fallos] == [("kid_ausente", "Dos")]
+
+
 def test_dos_kid_diferentes_no_se_eligen_arbitrariamente() -> None:
     session = Mock()
     session.get.side_effect = [

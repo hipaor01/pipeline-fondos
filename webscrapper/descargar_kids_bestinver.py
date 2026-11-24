@@ -59,45 +59,59 @@ DOCUMENTOS_OBJETIVO = {
 def obtener_fondos(session: requests.Session) -> list[tuple[str, str]]:
     """Devuelve [(nombre, url)] de los fondos listados en el footer."""
     arbol = obtener_arbol(session, BASE_URL)
-    listas = arbol.xpath(XPATH_LISTA_FONDOS)
-    if listas:
-        enlaces = listas[0].xpath(".//a[@href]")
-    else:
-        # Respaldo por si cambia la maquetación: enlaces del footer a /fondos-de-inversion/<slug>/
-        informar("[aviso] XPath de la lista de fondos no encontrado, usando respaldo.")
-        enlaces = arbol.xpath("//footer//a[contains(@href, '/fondos-de-inversion/')]")
+    def filtrar(enlaces):
+        fondos, vistos = [], set()
+        for a in enlaces:
+            url = urljoin(BASE_URL, a.get("href"))
+            nombre = " ".join(a.text_content().split())
+            partes = [p for p in urlparse(url).path.split("/") if p]
+            if len(partes) != 2 or partes[0] != "fondos-de-inversion":
+                continue
+            if url not in vistos:
+                vistos.add(url)
+                fondos.append((nombre, url))
+        return fondos
 
-    fondos, vistos = [], set()
-    for a in enlaces:
-        url = urljoin(BASE_URL, a.get("href"))
-        nombre = " ".join(a.text_content().split())
-        # Solo páginas concretas de fondo (/fondos-de-inversion/<slug>/)
-        partes = [p for p in urlparse(url).path.split("/") if p]
-        if len(partes) != 2 or partes[0] != "fondos-de-inversion":
-            continue
-        if url not in vistos:
-            vistos.add(url)
-            fondos.append((nombre, url))
+    fondos = filtrar(arbol.xpath(f"{XPATH_LISTA_FONDOS}//a[@href]"))
+    if not fondos:
+        informar("[aviso] Listado principal sin fondos, usando respaldo.")
+        fondos = filtrar(arbol.xpath("//footer//a[contains(@href, '/fondos-de-inversion/') ]"))
     return fondos
 
-def obtener_documentos(session: requests.Session, url_fondo: str) -> dict[str, str]:
-    """Devuelve {sufijo: url_pdf} con los documentos objetivo del fondo."""
+def obtener_documentos(session: requests.Session, url_fondo: str) -> tuple[dict[str, set[str]], list[tuple[str, str]]]:
+    """Devuelve documentos y enlaces a productos de una posible categoría."""
     arbol = obtener_arbol(session, url_fondo)
-    listas = arbol.xpath(XPATH_LISTA_DOCUMENTOS)
-    if listas:
-        enlaces = listas[0].xpath(".//a[@href]")
-    else:
-        # Respaldo: cualquier enlace a PDF de la página
-        informar("    [aviso] XPath de documentos no encontrado, usando respaldo.")
-        enlaces = arbol.xpath("//main//a[contains(@href, '.pdf')]")
+    def filtrar(enlaces):
+        encontrados = {}
+        for a in enlaces:
+            texto = normalizar(a.text_content())
+            for objetivo, sufijo in DOCUMENTOS_OBJETIVO.items():
+                if texto == objetivo:
+                    encontrados.setdefault(sufijo, set()).add(urljoin(url_fondo, a.get("href")))
+        return encontrados
 
-    encontrados = {}
-    for a in enlaces:
-        texto = normalizar(a.text_content())
-        for objetivo, sufijo in DOCUMENTOS_OBJETIVO.items():
-            if texto == objetivo and sufijo not in encontrados:
-                encontrados[sufijo] = urljoin(url_fondo, a.get("href"))
-    return encontrados
+    encontrados = filtrar(arbol.xpath(f"{XPATH_LISTA_DOCUMENTOS}//a[@href]"))
+    if not all(tipo in encontrados for tipo in DOCUMENTOS_OBJETIVO.values()):
+        informar("    [aviso] Faltan documentos en el bloque principal, usando respaldo.")
+        respaldo = filtrar(arbol.xpath("//main//a[contains(@href, '.pdf')]"))
+        for tipo, urls in respaldo.items():
+            if tipo not in encontrados:
+                encontrados[tipo] = urls
+    hijos = {}
+    if not encontrados:
+        origen = urlparse(url_fondo)
+        prefijo = origen.path.rstrip("/") + "/"
+        for enlace in arbol.xpath("//main//a[@href]"):
+            destino = urlparse(urljoin(url_fondo, enlace.get("href")))
+            resto = destino.path.removeprefix(prefijo).strip("/")
+            if (destino.scheme != "https" or destino.hostname != origen.hostname
+                    or not destino.path.startswith(prefijo) or not resto or "/" in resto
+                    or resto.lower().endswith(".pdf")):
+                continue
+            url = f"https://{destino.netloc}{prefijo}{resto}/"
+            nombre = " ".join(enlace.text_content().split())
+            hijos.setdefault(url, nombre if nombre and normalizar(nombre) != "ver producto" else resto)
+    return encontrados, [(nombre, url) for url, nombre in hijos.items()]
 
 class ScraperBestinver:
     """Descubre los documentos de Bestinver sin descargarlos ni subirlos."""
@@ -116,22 +130,36 @@ class ScraperBestinver:
             self.fallos.append(Incidencia("listado", "No se encontraron fondos", url=BASE_URL))
         informar(f"Encontrados {len(fondos)} fondos.\n")
         documentos = []
+        vistos = {url for _, url in fondos}
         for nombre, url in fondos:
             slug = [p for p in urlparse(url).path.split("/") if p][-1]
             informar(f"- {nombre} ({url})")
             time.sleep(self.delay)
             try:
-                encontrados = obtener_documentos(self.session, url)
+                encontrados, hijos = obtener_documentos(self.session, url)
             except requests.RequestException as error:
                 informar(f"    [error] no se pudo abrir la página: {error}")
                 self.fallos.append(Incidencia("pagina", str(error), fondo=nombre, url=url))
+                continue
+            if hijos:
+                for hijo_nombre, hijo_url in hijos:
+                    if hijo_url not in vistos:
+                        vistos.add(hijo_url)
+                        fondos.append((hijo_nombre, hijo_url))
                 continue
             for sufijo, tipo in (("datos_fundamentales", "kid"), ("ficha_fondo", "ficha_fondo")):
                 if sufijo not in encontrados:
                     informar(f"    [sin documento] {sufijo}")
                     self.ausentes.append(Incidencia("ausente", "Documento no encontrado", nombre, tipo, url))
+                    if tipo == "kid":
+                        self.fallos.append(Incidencia("kid_ausente", "KID no encontrado", nombre, tipo, url))
                     continue
-                documentos.append(Documento("bestinver", slug, tipo, encontrados[sufijo], nombre))
+                urls = encontrados[sufijo]
+                if len(urls) > 1:
+                    self.fallos.append(Incidencia("documentos_ambiguos", "Varios enlaces distintos para el mismo tipo", nombre, tipo, url))
+                    informar(f"    [error] varios enlaces para {tipo}")
+                    continue
+                documentos.append(Documento("bestinver", slug, tipo, next(iter(urls)), nombre))
         if fondos and not any(documento.tipo == "kid" for documento in documentos):
             self.fallos.append(Incidencia("listado", "No se encontraron documentos KID", url=BASE_URL))
         return documentos

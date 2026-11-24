@@ -52,7 +52,7 @@ uv run --group scraping python webscrapper/descargar_kids_bestinver.py --correla
    /html/body/div[1]/footer/div[2]/div/div[1]/div/ul
    ```
 
-   Cada enlace lleva a la página del fondo: `/fondos-de-inversion/<slug>/`.
+   Los enlaces llevan a fondos o a categorías como `otros` y `sicav-luxemburguesas`; estas últimas enlazan a productos en rutas más profundas.
 
 2. **Documentos de cada fondo.** En la página de cada fondo hay una lista de documentos (datos fundamentales, ficha, folleto, reglamento, cuentas anuales, informes semestrales...) en el XPath:
 
@@ -69,8 +69,8 @@ Las páginas son HTML estático (no necesitan JavaScript), así que basta con `r
 
 ### Qué hace el script
 
-1. Descarga la página de listado y extrae los enlaces de la lista del footer (XPath anterior). Se queda solo con URLs del tipo `/fondos-de-inversion/<slug>/`.
-2. Para cada fondo, abre su página, localiza la lista de documentos y selecciona los enlaces cuyo texto (normalizado: minúsculas, sin acentos) es exactamente `datos fundamentales` o `ficha del fondo`.
+1. Extrae los enlaces del footer. Si una página sin documentos enlaza a productos bajo su propia ruta, sigue esos enlaces como categoría y procesa cada producto una sola vez.
+2. Para cada fondo, abre su página y busca los enlaces cuyo texto normalizado es `datos fundamentales` o `ficha del fondo`. Si aparecen dos URLs distintas del mismo tipo, registra la ambigüedad sin elegir una.
 3. Comprueba al inicio que el bucket es accesible (si no, termina con error).
 4. Descarga cada PDF en memoria y lo sube a S3 con `ContentType: application/pdf` y metadatos de procedencia, fecha UTC, SHA-256 y correlación. Si se relanza el mismo día, se escribe la misma clave; con versionado activo se crea una nueva versión.
 5. Muestra un resumen con los documentos descargados y los fallos.
@@ -83,7 +83,8 @@ Cada ejecución genera un identificador de correlación, salvo que se facilite u
 con `--correlation-id`; aparece en los mensajes y en los metadatos de S3.
 El resultado distingue ejecuciones completas, parciales y fallidas; la CLI
 devuelve un código distinto de cero si hay fallos o no se sube ningún documento.
-Los documentos ausentes se identifican por separado y no se consideran errores.
+Las fichas ausentes se registran por separado; un KID ausente se registra además
+como fallo para que la captura quede parcial o fallida.
 Se guarda un manifiesto JSON por intento bajo `manifests/bestinver/`, con las
 subidas, versiones S3, huellas, ausencias y fallos. Un error al guardar el
 manifiesto se refleja en el resultado. Una interrupción abrupta puede dejar
@@ -96,7 +97,7 @@ no cambian. El hash permite reconocer el contenido repetido, pero la deduplicaci
 lógica y la conservación de las procedencias corresponden al procesamiento P2;
 todavía no están implementadas en este repositorio.
 
-**Respaldo:** si un XPath deja de encontrar nada (porque cambie la maquetación de la web), el script usa un selector más general (enlaces del footer a `/fondos-de-inversion/` o enlaces a `.pdf` dentro de `<main>`) y muestra un aviso.
+**Respaldo:** si el bloque principal no contiene fondos o falta algún tipo de documento, el script usa un selector más general (enlaces del footer a `/fondos-de-inversion/` o enlaces a `.pdf` dentro de `<main>`) y muestra un aviso.
 
 ### Salida
 

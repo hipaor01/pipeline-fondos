@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 import boto3
 import requests
 from botocore.exceptions import BotoCoreError, ClientError
-from lxml import html
+from lxml import etree, html
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
@@ -56,7 +56,10 @@ def normalizar(texto: str) -> str:
 def obtener_arbol(session: requests.Session, url: str) -> html.HtmlElement:
     resp = session.get(url, timeout=30)
     resp.raise_for_status()
-    return html.fromstring(resp.content, parser=html.HTMLParser(encoding=resp.encoding))
+    try:
+        return html.fromstring(resp.content, parser=html.HTMLParser(encoding=resp.encoding))
+    except (etree.ParserError, etree.XMLSyntaxError) as error:
+        raise requests.RequestException(f"HTML no interpretable en {url}: {error}") from error
 
 def descargar(session: requests.Session, url: str) -> bytes:
     """Descarga el PDF completo en memoria (son ficheros pequeños)."""

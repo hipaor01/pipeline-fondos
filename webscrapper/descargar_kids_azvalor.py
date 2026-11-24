@@ -137,6 +137,10 @@ class ScraperAzvalor:
                         )
                     )
                     informar(f"    [sin documento] {tipo}")
+                    if tipo == "kid":
+                        self.fallos.append(
+                            Incidencia("kid_ausente", "KID no encontrado", nombre, tipo, url)
+                        )
                 elif len(urls) > 1:
                     self.fallos.append(
                         Incidencia(
