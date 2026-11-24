@@ -8,6 +8,8 @@ Para preparar un bucket de pruebas en una cuenta propia y entender las decisione
 de captura, consulta la [guía AWS de captura](documentacion/GUIA_AWS_CAPTURA.md).
 La [guía de automatización P1](documentacion/AUTOMATIZACION_P1.md) describe el
 empaquetado y el despliegue de prueba con Lambda, Step Functions y Scheduler.
+La raíz Terraform de [almacenamiento P1](infra/environments/dev/storage/README.md)
+permite crear un bucket nuevo o referenciar uno ya existente sin modificarlo.
 
 ## Instalación
 
@@ -90,6 +92,8 @@ subidas, versiones S3, huellas, ausencias y fallos. Un error al guardar el
 manifiesto se refleja en el resultado. Una interrupción abrupta puede dejar
 objetos sin manifiesto y requiere conciliarlos mediante S3 y los logs. El bucket
 debe tener el versionado activado; una subida sin versión se informa como fallo.
+La fecha de cada clave corresponde a la descarga en Madrid, salvo que `--fecha`
+la fije de forma explícita; el manifiesto usa la fecha de inicio del intento.
 El scraper comprueba el versionado antes de subir, por lo que necesita también
 `s3:GetBucketVersioning` en el bucket.
 Repetir una captura puede crear nuevas versiones físicas incluso si los bytes

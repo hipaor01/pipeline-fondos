@@ -1,6 +1,6 @@
 # Automatización de la captura P1 en una cuenta de pruebas
 
-**Estado:** desplegado y probado el 24-11-2026 en una cuenta personal de pruebas (`eu-west-3`). No representa un despliegue en la cuenta compartida ni la integración de P2. El horario diario permanece desactivado.
+**Estado:** desplegado y probado en noviembre de 2026 en una cuenta personal de pruebas (`eu-west-3`). No representa un despliegue en la cuenta compartida ni la integración de P2. El horario diario permanece desactivado.
 
 ## Qué despliega
 
@@ -18,9 +18,9 @@ Se propuso una imagen común porque las tres fuentes se han capturado mediante H
 
 ## Antes de empezar
 
-- Python 3.14, `uv`, Docker con Buildx, AWS CLI v2, Terraform >= 1.10, `jq` y permisos para ECR, Lambda, IAM, CloudWatch Logs, Step Functions y Scheduler en la cuenta de prueba.
+- Python 3.14, `uv`, Docker con Buildx, AWS CLI v2, Terraform >= 1.10, `jq` y permisos para ECR, Lambda, IAM, CloudWatch Logs, CloudWatch, SQS, Step Functions y Scheduler en la cuenta de prueba.
 - Un bucket de documentos existente, privado y versionado en `eu-west-3`, como el preparado siguiendo [GUIA_AWS_CAPTURA.md](GUIA_AWS_CAPTURA.md). Confirmar la cuenta y el bucket antes de seguir; los comandos crean recursos y las ejecuciones generan versiones nuevas y costes.
-- Dos raíces Terraform independientes: `capture-registry` crea ECR; `capture` recibe el digest de la imagen y crea las Lambdas y la orquestación. Por defecto ambas usan **estado local** en sus respectivos directorios. Conservar y respaldar los dos estados; no ejecutar desde otra máquina o CI como si los recursos no existieran. Antes de compartir o integrar con P3, configurar y migrar cada raíz a un backend remoto independiente de forma acordada. Estos comandos no modifican el bootstrap ni la cuenta del compañero.
+- Tres raíces Terraform independientes: [`storage`](../infra/environments/dev/storage/README.md) crea un bucket o referencia uno existente sin gestionarlo; `capture-registry` crea ECR; `capture` recibe el digest de la imagen y crea las Lambdas y la orquestación. Por defecto usan **estado local** en sus respectivos directorios. Conservar y respaldar los estados; no ejecutar desde otra máquina o CI como si los recursos no existieran. Antes de compartir o integrar con P3, configurar y migrar cada raíz a un backend remoto independiente de forma acordada. Estos comandos no modifican el bootstrap ni la cuenta del compañero.
 
 ## 1. Cuenta, bucket y validación local
 
@@ -37,11 +37,11 @@ terraform -chdir=infra/environments/dev/capture validate
 terraform -chdir=infra/environments/dev/capture test
 ```
 
-El bucket debe mostrar `Enabled`. Tras activarlo por primera vez, esperar los 15 minutos de propagación recomendados por AWS antes de escribir. La validación Terraform y los tests simulados no sustituyen la prueba real en la cuenta.
+El bucket debe mostrar `Enabled`. Tras activarlo por primera vez, esperar los 15 minutos de propagación recomendados por AWS antes de escribir. La validación Terraform y los tests simulados no sustituyen la prueba real en la cuenta. Para crear o referenciar almacenamiento con Terraform, seguir la [guía de storage](../infra/environments/dev/storage/README.md).
 
 ## 2. Crear ECR y publicar la imagen
 
-Revisar el plan antes de aplicarlo. El módulo del repositorio impide su destrucción accidental y conserva hasta 30 imágenes. El nombre del repositorio es independiente del bucket de documentos.
+Revisar el plan antes de aplicarlo. El módulo del repositorio impide su destrucción accidental. Solo considera para expiración las imágenes con etiqueta `desechable-` y conserva las 30 más recientes de ellas. Las demás permanecen y generan costes de almacenamiento. **No etiquetar como desechable un digest activo o necesario para rollback**, aunque tenga otras etiquetas: ECR puede eliminar la imagen completa. El nombre del repositorio es independiente del bucket de documentos.
 
 ```bash
 terraform -chdir=infra/environments/dev/capture-registry plan -out=registro.tfplan
@@ -76,7 +76,7 @@ terraform -chdir=infra/environments/dev/capture output
 aws scheduler get-schedule --region "$PF_REGION" --name pipeline-fondos-dev-capture-daily
 ```
 
-El schedule debe estar `DISABLED` y su zona ser `Europe/Madrid`. Una ejecución completa puede tardar varios minutos por las pausas HTTP; cada Lambda tiene 900 segundos de timeout y 512 MiB.
+El schedule debe estar `DISABLED` y su zona ser `Europe/Madrid`. La cola `scheduler_failures_queue_url` guarda los errores al iniciar Step Functions; su alarma CloudWatch es visible en consola, pero no envía notificaciones por sí sola. Los fallos posteriores de una ejecución se consultan en Step Functions. El Scheduler no reintenta automáticamente el inicio para evitar posibles ejecuciones duplicadas. Una ejecución completa puede tardar varios minutos por las pausas HTTP; cada Lambda tiene 900 segundos de timeout y 512 MiB.
 
 ## 4. Ejecutar y verificar manualmente
 
@@ -129,6 +129,20 @@ printf 'Schedule %s previsto para %s UTC\n' "$PF_ONCE" "$PF_AT"
 ```
 
 Después de la hora indicada, consultar de nuevo `list-executions`, identificar la ejecución nueva y verificarla con `describe-execution` e historial. Comprobar con `get-schedule` que el schedule de una sola ejecución se ha eliminado y que `pipeline-fondos-dev-capture-daily` continúa desactivado. El borrado automático puede tardar; si la ejecución no aparece, revisar CloudWatch y los permisos del rol Scheduler. No confundir creación del schedule con prueba de que la captura haya terminado correctamente.
+
+### Consultar fallos al iniciar la captura
+
+La DLQ pertenece a Scheduler de P1 y no es la cola de procesamiento de P2. Si Scheduler no puede iniciar la máquina de estados, deposita el evento fallido aquí; los fallos de una ejecución ya iniciada se consultan en el historial de Step Functions. La alarma cambia de estado si hay mensajes visibles, pero no envía notificaciones mientras no se configure un destinatario.
+
+```bash
+export PF_SCHEDULER_DLQ="$(terraform -chdir=infra/environments/dev/capture output -raw scheduler_failures_queue_url)"
+aws sqs get-queue-attributes --region "$PF_REGION" --queue-url "$PF_SCHEDULER_DLQ" \
+  --attribute-names ApproximateNumberOfMessages
+aws cloudwatch describe-alarms --region "$PF_REGION" \
+  --alarm-names pipeline-fondos-dev-capture-scheduler-failures
+```
+
+El 25-11-2026, en la cuenta personal, un schedule temporal apuntó a una máquina inexistente y produjo `AccessDeniedException`; el mensaje llegó a la DLQ y la alarma cambió a `ALARM`. Se retiró solo el mensaje de prueba. La programación diaria permaneció desactivada.
 
 ## 6. Activar o detener la programación diaria
 
