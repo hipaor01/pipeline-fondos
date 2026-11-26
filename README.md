@@ -2,7 +2,14 @@
 
 Proyecto para extraer información de los KID (Documento de Datos Fundamentales) y fichas de fondos de inversión.
 
-La primera etapa del pipeline descarga, mediante web scraping, los documentos de los fondos de **Bestinver** y los guarda en **Amazon S3**.
+La primera etapa del pipeline descarga, mediante web scraping, los documentos de **Bestinver, Azvalor y Cobas AM** y los guarda en **Amazon S3**.
+
+Para preparar un bucket de pruebas en una cuenta propia y entender las decisiones
+de captura, consulta la [guía AWS de captura](documentacion/GUIA_AWS_CAPTURA.md).
+La [guía de automatización P1](documentacion/AUTOMATIZACION_P1.md) describe el
+empaquetado y el despliegue de prueba con Lambda, Step Functions y Scheduler.
+La raíz Terraform de [almacenamiento P1](infra/environments/dev/storage/README.md)
+permite crear un bucket nuevo o referenciar uno ya existente sin modificarlo.
 
 ## Instalación
 
@@ -36,6 +43,7 @@ uv run --group scraping python webscrapper/descargar_kids_bestinver.py --fecha 2
 uv run --group scraping python webscrapper/descargar_kids_bestinver.py --bucket otro-bucket
 uv run --group scraping python webscrapper/descargar_kids_bestinver.py --prefijo pruebas
 uv run --group scraping python webscrapper/descargar_kids_bestinver.py --delay 0.5
+uv run --group scraping python webscrapper/descargar_kids_bestinver.py --correlation-id mi-ejecucion
 ```
 
 ### Cómo se analizó la web
@@ -46,12 +54,12 @@ uv run --group scraping python webscrapper/descargar_kids_bestinver.py --delay 0
    /html/body/div[1]/footer/div[2]/div/div[1]/div/ul
    ```
 
-   Cada enlace lleva a la página del fondo: `/fondos-de-inversion/<slug>/`.
+   Los enlaces llevan a fondos o a categorías como `otros` y `sicav-luxemburguesas`; estas últimas enlazan a productos en rutas más profundas.
 
 2. **Documentos de cada fondo.** En la página de cada fondo hay una lista de documentos (datos fundamentales, ficha, folleto, reglamento, cuentas anuales, informes semestrales...) en el XPath:
 
    ```
-   /html/body/div[1]/div/main/section[4]/div[1]/div[2]/ul
+   /html/body/div[1]/div/main/section[3]/div[1]/div[2]/ul
    ```
 
    Los enlaces apuntan directamente a PDFs en `/wp-content/uploads/`, por ejemplo
@@ -63,27 +71,51 @@ Las páginas son HTML estático (no necesitan JavaScript), así que basta con `r
 
 ### Qué hace el script
 
-1. Descarga la página de listado y extrae los enlaces de la lista del footer (XPath anterior). Se queda solo con URLs del tipo `/fondos-de-inversion/<slug>/`.
-2. Para cada fondo, abre su página, localiza la lista de documentos y selecciona los enlaces cuyo texto (normalizado: minúsculas, sin acentos) es exactamente `datos fundamentales` o `ficha del fondo`.
+1. Extrae los enlaces HTTPS del dominio de Bestinver desde el footer. Si una página sin documentos enlaza a productos bajo su propia ruta, sigue esos enlaces como categoría y procesa cada producto una sola vez.
+2. Para cada fondo, abre su página y busca los enlaces cuyo texto normalizado es `datos fundamentales` o `ficha del fondo`. Si aparecen dos URLs distintas del mismo tipo, registra la ambigüedad sin elegir una.
 3. Comprueba al inicio que el bucket es accesible (si no, termina con error).
-4. Descarga cada PDF en memoria y lo sube a S3 con `ContentType: application/pdf` y la URL original en los metadatos (`x-amz-meta-url-origen`). Si se relanza el mismo día, los objetos se sobrescriben.
+4. Descarga cada PDF en memoria y lo sube a S3 con `ContentType: application/pdf` y metadatos de procedencia, fecha UTC, SHA-256 y correlación. Si se relanza el mismo día, se escribe la misma clave; con versionado activo se crea una nueva versión.
 5. Muestra un resumen con los documentos descargados y los fallos.
 
-**Respaldo:** si un XPath deja de encontrar nada (porque cambie la maquetación de la web), el script usa un selector más general (enlaces del footer a `/fondos-de-inversion/` o enlaces a `.pdf` dentro de `<main>`) y muestra un aviso.
+Antes de la subida se comprueba la cabecera y se abre el PDF con `pypdf` para
+rechazar respuestas vacías, HTML o documentos que no se puedan leer. Si dos
+documentos de una ejecución generan la misma clave S3, se informa el conflicto
+y no se sobrescribe el primero.
+Cada ejecución genera un identificador de correlación, salvo que se facilite uno
+con `--correlation-id`; aparece en los mensajes y en los metadatos de S3.
+El resultado distingue ejecuciones completas, parciales y fallidas; la CLI
+devuelve un código distinto de cero si hay fallos o no se sube ningún documento.
+Las fichas ausentes se registran por separado; un KID ausente se registra además
+como fallo para que la captura quede parcial o fallida.
+Se guarda un manifiesto JSON por intento bajo `manifests/bestinver/`, con las
+subidas, versiones S3, huellas, ausencias y fallos. Un error al guardar el
+manifiesto se refleja en el resultado. Una interrupción abrupta puede dejar
+objetos sin manifiesto y requiere conciliarlos mediante S3 y los logs. El bucket
+debe tener el versionado activado; una subida sin versión se informa como fallo.
+La fecha de cada clave corresponde a la descarga en Madrid, salvo que `--fecha`
+la fije de forma explícita; el manifiesto usa la fecha de inicio del intento.
+El scraper comprueba el versionado antes de subir, por lo que necesita también
+`s3:GetBucketVersioning` en el bucket.
+Repetir una captura puede crear nuevas versiones físicas incluso si los bytes
+no cambian. El hash permite reconocer el contenido repetido, pero la deduplicación
+lógica y la conservación de las procedencias corresponden al procesamiento P2;
+todavía no están implementadas en este repositorio.
+
+**Respaldo:** si el bloque principal no contiene fondos o falta algún tipo de documento, el script usa un selector más general (enlaces del footer a `/fondos-de-inversion/` o enlaces a `.pdf` dentro de `<main>`) y muestra un aviso.
 
 ### Salida
 
 ```
 s3://curso-miax-pipeline-fondos/
-└── bestinver/
+└── raw/bestinver/
     └── 20261119/
-        ├── bestinfond_datos_fundamentales.pdf
+        ├── bestinfond_kid.pdf
         ├── bestinfond_ficha_fondo.pdf
-        ├── bestinver-internacional_datos_fundamentales.pdf
+        ├── bestinver-internacional_kid.pdf
         └── ...
 ```
 
-Cada ejecución guarda los documentos en una carpeta con la fecha (`AAAAMMDD`), así se conserva el histórico de versiones de los KID. Nombre de cada fichero: `<slug-del-fondo>_<tipo>.pdf`.
+Cada ejecución guarda los documentos en una carpeta con la fecha de Madrid (`AAAAMMDD`). Nombre de cada fichero: `<slug-del-fondo>_<tipo>.pdf`, con tipos `kid` y `ficha_fondo`. Los objetos anteriores permanecen en sus rutas originales.
 
 ### Resultados (ejecución del 19/11/2026)
 
@@ -91,6 +123,48 @@ Cada ejecución guarda los documentos en una carpeta con la fecha (`AAAAMMDD`), 
 - **37 PDFs** subidos a `s3://curso-miax-pipeline-fondos/bestinver/20261119/`: 22 "Datos fundamentales" y 15 "Fichas del fondo".
 - Sin ficha publicada en la web: Latam, Solidario y Bonos Institucional I–V.
 - `Otros` y `SICAV Luxemburguesas` son páginas que agrupan varios productos y no tienen estos documentos.
+
+## Etapa 1: descarga de documentos de Azvalor
+
+Script: [`webscrapper/descargar_kids_azvalor.py`](webscrapper/descargar_kids_azvalor.py).
+
+Descubre los fondos de inversión y las SICAV o clases enlazados en el menú de
+`https://www.azvalor.com/fondos-de-inversion/`. Identifica por el texto del
+enlace el **Folleto simplificado (DFP)** o **Documento de datos fundamentales**
+como KID y la ficha de producto como `ficha_fondo`. Mantiene claves diferentes
+para cada clase, incluso si comparten la misma ficha. Si encuentra varios KID
+distintos para un producto, informa un fallo en lugar de elegir uno al azar.
+
+```bash
+uv run --group scraping python webscrapper/descargar_kids_azvalor.py --bucket mi-bucket
+uv run --group scraping python webscrapper/descargar_kids_azvalor.py --bucket mi-bucket --fecha 20261123 --delay 1 --correlation-id prueba-azvalor
+```
+
+Comparte con Bestinver la validación PDF, el versionado, los metadatos y el
+manifiesto. Las claves son `raw/azvalor/AAAAMMDD/<slug>_<tipo>.pdf` y el
+manifiesto se guarda bajo `manifests/azvalor/`. En la prueba real del 23/11/2026
+se encontraron **11 KID y 10 fichas**; la página de Capital FI no enlazaba una
+ficha de producto. La estructura y los documentos pueden cambiar.
+
+## Etapa 1: descarga de documentos de Cobas AM
+
+Script: [`webscrapper/descargar_kids_cobas.py`](webscrapper/descargar_kids_cobas.py).
+
+Descubre los productos de inversión enlazados desde `https://www.cobasam.com/productos/`
+y extrae el enlace `PRIIP pdf` y la `Ficha del fondo pdf` de cada bloque de
+producto o clase. Conserva el ISIN y la clase de cada bloque; las claves de
+clase incluyen un sufijo como `-clase-a`. No selecciona arbitrariamente un
+enlace o una clase si existen varios candidatos incompatibles. Los planes de
+pensiones quedan fuera del alcance de esta captura de fondos de inversión.
+
+```bash
+uv run --group scraping python webscrapper/descargar_kids_cobas.py --bucket mi-bucket
+uv run --group scraping python webscrapper/descargar_kids_cobas.py --bucket mi-bucket --fecha 20261123 --delay 1 --correlation-id prueba-cobas
+```
+
+Las claves son `raw/cobas/AAAAMMDD/<slug>_<tipo>.pdf` y el manifiesto se
+guarda bajo `manifests/cobas/`. En la prueba real del 23/11/2026 se capturaron
+22 KID y 22 fichas correspondientes a siete productos y sus clases.
 
 ## Etapa 2: transformación de PDF a Markdown
 

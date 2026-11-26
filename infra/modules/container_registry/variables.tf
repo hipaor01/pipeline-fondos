@@ -19,6 +19,12 @@ variable "environment" {
   type        = string
 }
 
+variable "component" {
+  description = "Componente propietario del repositorio."
+  type        = string
+  default     = "frontend"
+}
+
 variable "retained_image_count" {
   description = "Número máximo de imágenes que conserva la política de ciclo de vida."
   type        = number
@@ -27,6 +33,17 @@ variable "retained_image_count" {
   validation {
     condition     = var.retained_image_count >= 1 && floor(var.retained_image_count) == var.retained_image_count
     error_message = "retained_image_count debe ser un número entero positivo."
+  }
+}
+
+variable "expirable_tag_prefix" {
+  description = "Si se indica, solo las imágenes con este prefijo pueden expirar."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.expirable_tag_prefix == null ? true : can(regex("^[a-zA-Z0-9][a-zA-Z0-9_.-]*$", var.expirable_tag_prefix))
+    error_message = "expirable_tag_prefix debe ser un prefijo de etiqueta ECR no vacío."
   }
 }
 

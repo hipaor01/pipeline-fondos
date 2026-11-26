@@ -15,8 +15,9 @@ Pipeline para descargar y extraer información de los KID (Documento de Datos Fu
 
 ## Estructura
 
-- `webscrapper/descargar_kids_bestinver.py`: etapa 1, scraping de los PDF de Bestinver (datos fundamentales y ficha del fondo).
-- Almacenamiento: los PDFs se suben a S3, bucket `curso-miax-pipeline-fondos`, con claves `<gestora>/<AAAAMMDD>/<slug>_<tipo>.pdf` (`boto3`, credenciales estándar de AWS). `descargas/` queda en `.gitignore` por si se guarda algo en local.
+- `webscrapper/`: captura compartida y adaptadores para Bestinver, Azvalor y Cobas.
+- Almacenamiento: los PDF se suben al bucket configurable de S3 con claves `raw/<gestora>/<AAAAMMDD>/<slug>_<tipo>.pdf`; los manifiestos se guardan bajo `manifests/`. Se exige versionado y se usan las credenciales estándar de AWS. `descargas/` queda en `.gitignore` para archivos locales.
+- `documentacion/AUTOMATIZACION_P1.md`: despliegue y pruebas de la captura en una cuenta AWS de pruebas.
 
 ## Convenciones
 

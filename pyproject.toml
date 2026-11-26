@@ -26,6 +26,7 @@ frontend = [
 scraping = [
     { include-group = "aws" },
     "lxml",
+    "pypdf>=5,<7",
     "requests",
 ]
 procesamiento = [

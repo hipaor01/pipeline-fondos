@@ -6,9 +6,9 @@ Flujo:
   1. Abre https://www.bestinver.es/fondos-de-inversion/ y lee la lista de
      fondos del footer (XPath /html/body/div[1]/footer/div[2]/div/div[1]/div/ul).
   2. Entra en la página de cada fondo y lee la lista de documentos
-     (XPath /html/body/div[1]/div/main/section[4]/div[1]/div[2]/ul).
+     (XPath /html/body/div[1]/div/main/section[3]/div[1]/div[2]/ul).
   3. Descarga los documentos cuyo texto coincide con los buscados y los sube
-     a s3://<bucket>/<prefijo>/<AAAAMMDD>/<slug>_<tipo>.pdf.
+    a s3://<bucket>/raw/<prefijo>/<AAAAMMDD>/<slug>_<tipo>.pdf.
 
 Las credenciales de AWS se toman de la configuración estándar
 (aws configure / aws login, variables de entorno o perfil con AWS_PROFILE).
@@ -20,24 +20,35 @@ Uso:
 """
 
 import argparse
-import re
+import sys
 import time
-import unicodedata
-from datetime import date, datetime
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlunparse
 
-import boto3
 import requests
-from botocore.exceptions import BotoCoreError, ClientError
-from lxml import html
+
+if __package__:
+    from .base import Documento, Incidencia, ResultadoIngesta
+    from .ingesta import ejecutar as ejecutar_ingesta
+    from .ingesta import (
+        ejecutar_cli,
+        informar,
+        normalizar,
+        obtener_arbol,
+    )
+else:
+    from base import Documento, Incidencia, ResultadoIngesta
+    from ingesta import ejecutar as ejecutar_ingesta
+    from ingesta import (
+        ejecutar_cli,
+        informar,
+        normalizar,
+        obtener_arbol,
+    )
 
 BASE_URL = "https://www.bestinver.es/fondos-de-inversion/"
 
-BUCKET_POR_DEFECTO = "curso-miax-pipeline-fondos"
-PREFIJO_POR_DEFECTO = "bestinver"
-
 XPATH_LISTA_FONDOS = "/html/body/div[1]/footer/div[2]/div/div[1]/div/ul"
-XPATH_LISTA_DOCUMENTOS = "/html/body/div[1]/div/main/section[4]/div[1]/div[2]/ul"
+XPATH_LISTA_DOCUMENTOS = "/html/body/div[1]/div/main/section[3]/div[1]/div[2]/ul"
 
 # Texto del enlace (normalizado) -> sufijo del fichero descargado
 DOCUMENTOS_OBJETIVO = {
@@ -45,162 +56,122 @@ DOCUMENTOS_OBJETIVO = {
     "ficha del fondo": "ficha_fondo",
 }
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"
-    ),
-    "Accept-Language": "es-ES,es;q=0.9",
-}
-
-
-def normalizar(texto: str) -> str:
-    """Minúsculas, sin acentos y con espacios colapsados."""
-    texto = unicodedata.normalize("NFKD", texto)
-    texto = "".join(c for c in texto if not unicodedata.combining(c))
-    return re.sub(r"\s+", " ", texto).strip().lower()
-
-
-def obtener_arbol(session: requests.Session, url: str) -> html.HtmlElement:
-    resp = session.get(url, timeout=30)
-    resp.raise_for_status()
-    return html.fromstring(resp.content)
-
-
 def obtener_fondos(session: requests.Session) -> list[tuple[str, str]]:
     """Devuelve [(nombre, url)] de los fondos listados en el footer."""
     arbol = obtener_arbol(session, BASE_URL)
-    listas = arbol.xpath(XPATH_LISTA_FONDOS)
-    if listas:
-        enlaces = listas[0].xpath(".//a[@href]")
-    else:
-        # Respaldo por si cambia la maquetación: enlaces del footer a /fondos-de-inversion/<slug>/
-        print("[aviso] XPath de la lista de fondos no encontrado, usando respaldo.")
-        enlaces = arbol.xpath("//footer//a[contains(@href, '/fondos-de-inversion/')]")
+    def filtrar(enlaces):
+        fondos, vistos = [], set()
+        for a in enlaces:
+            url = urljoin(BASE_URL, a.get("href"))
+            nombre = " ".join(a.text_content().split())
+            destino = urlparse(url)
+            partes = [p for p in destino.path.split("/") if p]
+            if (destino.scheme != "https" or destino.hostname != urlparse(BASE_URL).hostname
+                    or len(partes) != 2 or partes[0] != "fondos-de-inversion"):
+                continue
+            url = urlunparse((destino.scheme, destino.netloc, destino.path.rstrip("/") + "/", "", "", ""))
+            if url not in vistos:
+                vistos.add(url)
+                fondos.append((nombre, url))
+        return fondos
 
-    fondos, vistos = [], set()
-    for a in enlaces:
-        url = urljoin(BASE_URL, a.get("href"))
-        nombre = " ".join(a.text_content().split())
-        # Solo páginas concretas de fondo (/fondos-de-inversion/<slug>/)
-        partes = [p for p in urlparse(url).path.split("/") if p]
-        if len(partes) != 2 or partes[0] != "fondos-de-inversion":
-            continue
-        if url not in vistos:
-            vistos.add(url)
-            fondos.append((nombre, url))
+    fondos = filtrar(arbol.xpath(f"{XPATH_LISTA_FONDOS}//a[@href]"))
+    if not fondos:
+        informar("[aviso] Listado principal sin fondos, usando respaldo.")
+        fondos = filtrar(arbol.xpath("//footer//a[contains(@href, '/fondos-de-inversion/') ]"))
     return fondos
 
-
-def obtener_documentos(session: requests.Session, url_fondo: str) -> dict[str, str]:
-    """Devuelve {sufijo: url_pdf} con los documentos objetivo del fondo."""
+def obtener_documentos(session: requests.Session, url_fondo: str) -> tuple[dict[str, set[str]], list[tuple[str, str]]]:
+    """Devuelve documentos y enlaces a productos de una posible categoría."""
     arbol = obtener_arbol(session, url_fondo)
-    listas = arbol.xpath(XPATH_LISTA_DOCUMENTOS)
-    if listas:
-        enlaces = listas[0].xpath(".//a[@href]")
-    else:
-        # Respaldo: cualquier enlace a PDF de la página
-        print("    [aviso] XPath de documentos no encontrado, usando respaldo.")
-        enlaces = arbol.xpath("//main//a[contains(@href, '.pdf')]")
+    def filtrar(enlaces):
+        encontrados = {}
+        for a in enlaces:
+            texto = normalizar(a.text_content())
+            for objetivo, sufijo in DOCUMENTOS_OBJETIVO.items():
+                if texto == objetivo:
+                    encontrados.setdefault(sufijo, set()).add(urljoin(url_fondo, a.get("href")))
+        return encontrados
 
-    encontrados = {}
-    for a in enlaces:
-        texto = normalizar(a.text_content())
-        for objetivo, sufijo in DOCUMENTOS_OBJETIVO.items():
-            if texto == objetivo and sufijo not in encontrados:
-                encontrados[sufijo] = urljoin(url_fondo, a.get("href"))
-    return encontrados
-
-
-def descargar(session: requests.Session, url: str) -> bytes:
-    """Descarga el PDF completo en memoria (son ficheros pequeños)."""
-    resp = session.get(url, timeout=60)
-    resp.raise_for_status()
-    return resp.content
-
-
-def subir_s3(s3, bucket: str, clave: str, contenido: bytes, url_origen: str) -> None:
-    s3.put_object(
-        Bucket=bucket,
-        Key=clave,
-        Body=contenido,
-        ContentType="application/pdf",
-        Metadata={"url-origen": url_origen},
-    )
-
-
-def fecha_valida(texto: str) -> str:
-    """Valida el formato AAAAMMDD para argparse."""
-    try:
-        datetime.strptime(texto, "%Y%m%d")
-    except ValueError:
-        raise argparse.ArgumentTypeError(f"fecha no válida '{texto}', formato AAAAMMDD")
-    return texto
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--bucket", default=BUCKET_POR_DEFECTO, help="Bucket de S3 de destino")
-    parser.add_argument("--prefijo", default=PREFIJO_POR_DEFECTO, help="Carpeta raíz dentro del bucket")
-    parser.add_argument(
-        "--fecha", type=fecha_valida, default=date.today().strftime("%Y%m%d"),
-        help="Subcarpeta de fecha AAAAMMDD (por defecto, hoy)",
-    )
-    parser.add_argument("--delay", type=float, default=1.0, help="Segundos de espera entre peticiones")
-    args = parser.parse_args()
-
-    carpeta_s3 = f"{args.prefijo.strip('/')}/{args.fecha}"
-    s3 = boto3.client("s3")
-    try:
-        s3.head_bucket(Bucket=args.bucket)
-    except (BotoCoreError, ClientError) as e:
-        raise SystemExit(f"[error] no se puede acceder al bucket '{args.bucket}': {e}")
-    print(f"Destino: s3://{args.bucket}/{carpeta_s3}/\n")
-
-    session = requests.Session()
-    session.headers.update(HEADERS)
-
-    fondos = obtener_fondos(session)
-    print(f"Encontrados {len(fondos)} fondos.\n")
-
-    total, fallos = 0, []
-    for nombre, url in fondos:
-        slug = [p for p in urlparse(url).path.split("/") if p][-1]
-        print(f"- {nombre} ({url})")
-        time.sleep(args.delay)
-        try:
-            docs = obtener_documentos(session, url)
-        except requests.RequestException as e:
-            print(f"    [error] no se pudo abrir la página: {e}")
-            fallos.append((nombre, "página"))
-            continue
-
-        for sufijo in DOCUMENTOS_OBJETIVO.values():
-            if sufijo not in docs:
-                print(f"    [sin documento] {sufijo}")
+    encontrados = filtrar(arbol.xpath(f"{XPATH_LISTA_DOCUMENTOS}//a[@href]"))
+    if not all(tipo in encontrados for tipo in DOCUMENTOS_OBJETIVO.values()):
+        informar("    [aviso] Faltan documentos en el bloque principal, usando respaldo.")
+        respaldo = filtrar(arbol.xpath("//main//a[contains(@href, '.pdf')]"))
+        for tipo, urls in respaldo.items():
+            if tipo not in encontrados:
+                encontrados[tipo] = urls
+    hijos = {}
+    if not encontrados:
+        origen = urlparse(url_fondo)
+        prefijo = origen.path.rstrip("/") + "/"
+        for enlace in arbol.xpath("//main//a[@href]"):
+            destino = urlparse(urljoin(url_fondo, enlace.get("href")))
+            resto = destino.path.removeprefix(prefijo).strip("/")
+            if (destino.scheme != "https" or destino.hostname != origen.hostname
+                    or not destino.path.startswith(prefijo) or not resto or "/" in resto
+                    or resto.lower().endswith(".pdf")):
                 continue
-            clave = f"{carpeta_s3}/{slug}_{sufijo}.pdf"
+            url = f"https://{destino.netloc}{prefijo}{resto}/"
+            nombre = " ".join(enlace.text_content().split())
+            hijos.setdefault(url, nombre if nombre and normalizar(nombre) != "ver producto" else resto)
+    return encontrados, [(nombre, url) for url, nombre in hijos.items()]
+
+class ScraperBestinver:
+    """Descubre los documentos de Bestinver sin descargarlos ni subirlos."""
+
+    def __init__(self, session: requests.Session, delay: float = 1.0) -> None:
+        self.session = session
+        self.delay = delay
+        self.fallos: list[Incidencia] = []
+        self.ausentes: list[Incidencia] = []
+
+    def descubrir(self) -> list[Documento]:
+        self.fallos.clear()
+        self.ausentes.clear()
+        fondos = obtener_fondos(self.session)
+        if not fondos:
+            self.fallos.append(Incidencia("listado", "No se encontraron fondos", url=BASE_URL))
+        informar(f"Encontrados {len(fondos)} fondos.\n")
+        documentos = []
+        vistos = {url for _, url in fondos}
+        for nombre, url in fondos:
+            slug = [p for p in urlparse(url).path.split("/") if p][-1]
+            informar(f"- {nombre} ({url})")
+            time.sleep(self.delay)
             try:
-                time.sleep(args.delay)
-                contenido = descargar(session, docs[sufijo])
-            except requests.RequestException as e:
-                print(f"    [error] descarga {sufijo}: {e}")
-                fallos.append((nombre, f"{sufijo} (descarga)"))
+                encontrados, hijos = obtener_documentos(self.session, url)
+            except requests.RequestException as error:
+                informar(f"    [error] no se pudo abrir la página: {error}")
+                self.fallos.append(Incidencia("pagina", str(error), fondo=nombre, url=url))
                 continue
-            try:
-                subir_s3(s3, args.bucket, clave, contenido, docs[sufijo])
-                print(f"    [ok] s3://{args.bucket}/{clave}")
-                total += 1
-            except (BotoCoreError, ClientError) as e:
-                print(f"    [error] subida {sufijo}: {e}")
-                fallos.append((nombre, f"{sufijo} (subida S3)"))
+            if hijos:
+                for hijo_nombre, hijo_url in hijos:
+                    if hijo_url not in vistos:
+                        vistos.add(hijo_url)
+                        fondos.append((hijo_nombre, hijo_url))
+                continue
+            for sufijo, tipo in (("datos_fundamentales", "kid"), ("ficha_fondo", "ficha_fondo")):
+                if sufijo not in encontrados:
+                    informar(f"    [sin documento] {sufijo}")
+                    self.ausentes.append(Incidencia("ausente", "Documento no encontrado", nombre, tipo, url))
+                    if tipo == "kid":
+                        self.fallos.append(Incidencia("kid_ausente", "KID no encontrado", nombre, tipo, url))
+                    continue
+                urls = encontrados[sufijo]
+                if len(urls) > 1:
+                    self.fallos.append(Incidencia("documentos_ambiguos", "Varios enlaces distintos para el mismo tipo", nombre, tipo, url))
+                    informar(f"    [error] varios enlaces para {tipo}")
+                    continue
+                documentos.append(Documento("bestinver", slug, tipo, next(iter(urls)), nombre))
+        if fondos and not any(documento.tipo == "kid" for documento in documentos):
+            self.fallos.append(Incidencia("listado", "No se encontraron documentos KID", url=BASE_URL))
+        return documentos
 
-    print(f"\nSubidos {total} documentos a 's3://{args.bucket}/{carpeta_s3}/'.")
-    if fallos:
-        print(f"Fallos ({len(fallos)}):")
-        for nombre, que in fallos:
-            print(f"  - {nombre}: {que}")
+def main() -> int:
+    return ejecutar_cli(ScraperBestinver, "bestinver", BASE_URL, __doc__)
 
+def ejecutar(args: argparse.Namespace) -> ResultadoIngesta:
+    return ejecutar_ingesta(args, ScraperBestinver, "bestinver", BASE_URL)
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
