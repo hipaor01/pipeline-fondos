@@ -243,6 +243,12 @@ data "aws_iam_policy_document" "github_actions_processing_database" {
   }
 
   statement {
+    sid       = "DescribeManagedDatabaseKeys"
+    actions   = ["kms:DescribeKey"]
+    resources = ["*"]
+  }
+
+  statement {
     sid       = "RunMigrations"
     actions   = ["rds-data:ExecuteStatement", "rds-data:BeginTransaction", "rds-data:CommitTransaction", "rds-data:RollbackTransaction"]
     resources = [local.processing_cluster_arn]
