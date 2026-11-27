@@ -1,0 +1,113 @@
+name: Publish immutable ECR image
+description: Reuse an existing commit image or build it and return its digest.
+
+inputs:
+  aws-region:
+    description: AWS region containing the ECR repository.
+    required: true
+  build-context:
+    description: Docker build context.
+    required: false
+    default: "."
+  dockerfile:
+    description: Dockerfile used to build the image.
+    required: true
+  image-tag:
+    description: Immutable tag used to identify this source revision.
+    required: true
+  platform:
+    description: Target container platform.
+    required: false
+    default: linux/arm64
+  repository-name:
+    description: ECR repository name.
+    required: true
+  repository-url:
+    description: ECR repository URL without a tag or digest.
+    required: true
+
+outputs:
+  already_existed:
+    description: Whether ECR already contained the requested tag.
+    value: ${{ steps.image.outputs.exists }}
+  digest:
+    description: Published image digest.
+    value: ${{ steps.published.outputs.digest }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check whether the image already exists
+      id: image
+      shell: bash
+      env:
+        ECR_REPOSITORY_NAME: ${{ inputs.repository-name }}
+        IMAGE_TAG: ${{ inputs.image-tag }}
+      run: |
+        set +e
+        response=$(aws ecr describe-images \
+          --repository-name "${ECR_REPOSITORY_NAME}" \
+          --image-ids "imageTag=${IMAGE_TAG}" 2>&1)
+        status=$?
+        set -e
+
+        if [ "${status}" -eq 0 ]; then
+          echo "exists=true" >> "${GITHUB_OUTPUT}"
+        elif [[ "${response}" == *"ImageNotFoundException"* ]]; then
+          echo "exists=false" >> "${GITHUB_OUTPUT}"
+        else
+          echo "${response}" >&2
+          exit "${status}"
+        fi
+
+    - name: Authenticate Docker with ECR
+      if: steps.image.outputs.exists == 'false'
+      shell: bash
+      env:
+        AWS_REGION: ${{ inputs.aws-region }}
+        ECR_REPOSITORY_URL: ${{ inputs.repository-url }}
+      run: |
+        registry="${ECR_REPOSITORY_URL%%/*}"
+        aws ecr get-login-password --region "${AWS_REGION}" \
+          | docker login \
+            --username AWS \
+            --password-stdin \
+            "${registry}"
+
+    - name: Build and publish image
+      if: steps.image.outputs.exists == 'false'
+      shell: bash
+      env:
+        BUILD_CONTEXT: ${{ inputs.build-context }}
+        DOCKERFILE: ${{ inputs.dockerfile }}
+        ECR_REPOSITORY_URL: ${{ inputs.repository-url }}
+        IMAGE_TAG: ${{ inputs.image-tag }}
+        PLATFORM: ${{ inputs.platform }}
+      run: |
+        docker buildx build \
+          --platform "${PLATFORM}" \
+          --push \
+          --provenance=false \
+          --file "${DOCKERFILE}" \
+          --tag "${ECR_REPOSITORY_URL}:${IMAGE_TAG}" \
+          "${BUILD_CONTEXT}"
+
+    - name: Resolve image digest
+      id: published
+      shell: bash
+      env:
+        ECR_REPOSITORY_NAME: ${{ inputs.repository-name }}
+        IMAGE_TAG: ${{ inputs.image-tag }}
+      run: |
+        image_digest=$(aws ecr describe-images \
+          --repository-name "${ECR_REPOSITORY_NAME}" \
+          --image-ids "imageTag=${IMAGE_TAG}" \
+          --query 'imageDetails[0].imageDigest' \
+          --output text)
+
+        if [[ ! "${image_digest}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+          echo "ECR did not return a valid image digest" >&2
+          exit 1
+        fi
+
+        echo "digest=${image_digest}" >> "${GITHUB_OUTPUT}"

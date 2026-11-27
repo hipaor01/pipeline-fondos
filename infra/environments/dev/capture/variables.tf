@@ -22,6 +22,21 @@ variable "image_uri" {
   }
 }
 
+variable "permissions_boundary_arn" {
+  description = "Permissions boundary opcional para los roles de ejecución de captura."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.permissions_boundary_arn == null ||
+      can(regex("^arn:aws:iam::[0-9]{12}:policy/[A-Za-z0-9+=,.@_/-]+$", var.permissions_boundary_arn))
+    )
+    error_message = "permissions_boundary_arn debe ser el ARN de una política IAM."
+  }
+}
+
 variable "schedule_enabled" {
   description = "Activa el horario diario una vez completadas las pruebas."
   type        = bool

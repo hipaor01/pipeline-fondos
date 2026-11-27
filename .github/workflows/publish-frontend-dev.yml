@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - ".dockerignore"
+      - ".github/actions/publish-ecr-image/**"
       - ".github/workflows/manage-frontend-dev.yml"
       - ".github/workflows/publish-frontend-dev.yml"
       - "Dockerfile"
@@ -21,6 +22,7 @@ on:
     branches: [main]
     paths:
       - ".dockerignore"
+      - ".github/actions/publish-ecr-image/**"
       - ".github/workflows/publish-frontend-dev.yml"
       - "Dockerfile"
       - "api/models/**"
@@ -173,77 +175,23 @@ jobs:
 
           repository_name=$(terraform -chdir=infra/environments/dev/frontend output -raw repository_name)
           repository_url=$(terraform -chdir=infra/environments/dev/frontend output -raw repository_url)
-          registry="${repository_url%%/*}"
 
           {
             echo "repository_name=${repository_name}"
             echo "repository_url=${repository_url}"
-            echo "registry=${registry}"
           } >> "${GITHUB_OUTPUT}"
 
-      - name: Check whether the commit image already exists
-        if: github.ref == 'refs/heads/main'
-        id: image
-        env:
-          ECR_REPOSITORY_NAME: ${{ steps.registry.outputs.repository_name }}
-        run: |
-          set +e
-          response=$(aws ecr describe-images \
-            --repository-name "${ECR_REPOSITORY_NAME}" \
-            --image-ids "imageTag=${GITHUB_SHA}" 2>&1)
-          status=$?
-          set -e
-
-          if [ "${status}" -eq 0 ]; then
-            echo "exists=true" >> "${GITHUB_OUTPUT}"
-          elif [[ "${response}" == *"ImageNotFoundException"* ]]; then
-            echo "exists=false" >> "${GITHUB_OUTPUT}"
-          else
-            echo "${response}" >&2
-            exit "${status}"
-          fi
-
-      - name: Authenticate Docker with ECR
-        if: github.ref == 'refs/heads/main' && steps.image.outputs.exists == 'false'
-        env:
-          ECR_REGISTRY: ${{ steps.registry.outputs.registry }}
-        run: |
-          aws ecr get-login-password --region "${AWS_REGION}" \
-            | docker login \
-              --username AWS \
-              --password-stdin \
-              "${ECR_REGISTRY}"
-
-      - name: Build and publish ARM64 image
-        if: github.ref == 'refs/heads/main' && steps.image.outputs.exists == 'false'
-        env:
-          ECR_REPOSITORY_URL: ${{ steps.registry.outputs.repository_url }}
-        run: |
-          docker buildx build \
-            --platform linux/arm64 \
-            --push \
-            --provenance=false \
-            --tag "${ECR_REPOSITORY_URL}:${GITHUB_SHA}" \
-            .
-
-      - name: Resolve published image digest
+      - name: Publish immutable ARM64 image
         if: github.ref == 'refs/heads/main'
         id: published
-        env:
-          ECR_REPOSITORY_NAME: ${{ steps.registry.outputs.repository_name }}
-        run: |
-          image_digest=$(aws ecr describe-images \
-            --repository-name "${ECR_REPOSITORY_NAME}" \
-            --image-ids "imageTag=${GITHUB_SHA}" \
-            --query "imageDetails[0].imageDigest" \
-            --output text)
-
-          if [ -z "${image_digest}" ] || [ "${image_digest}" = "None" ]; then
-            echo "ECR did not return the published image digest" >&2
-            exit 1
-          fi
-
-          echo "digest=${image_digest}" >> "${GITHUB_OUTPUT}"
+        uses: ./.github/actions/publish-ecr-image
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          dockerfile: Dockerfile
+          image-tag: ${{ github.sha }}
+          platform: linux/arm64
+          repository-name: ${{ steps.registry.outputs.repository_name }}
+          repository-url: ${{ steps.registry.outputs.repository_url }}
 
       - name: Deploy ECS Express service
         if: github.ref == 'refs/heads/main'
@@ -291,7 +239,7 @@ jobs:
         if: github.ref == 'refs/heads/main'
         env:
           ECR_REPOSITORY_URL: ${{ steps.registry.outputs.repository_url }}
-          IMAGE_ALREADY_EXISTED: ${{ steps.image.outputs.exists }}
+          IMAGE_ALREADY_EXISTED: ${{ steps.published.outputs.already_existed }}
           IMAGE_DIGEST: ${{ steps.published.outputs.digest }}
           SERVICE_ARN: ${{ steps.service.outputs.service_arn }}
           SERVICE_ENDPOINT: ${{ steps.service.outputs.endpoint }}

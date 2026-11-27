@@ -36,6 +36,7 @@ locals {
   frontend_repository_arn          = "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/${local.frontend_repository_name}"
   frontend_task_execution_role_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.frontend_task_execution_role_name}"
   frontend_infrastructure_role_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.frontend_infrastructure_role_name}"
+  frontend_cluster_arn             = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:cluster/default"
   frontend_service_arn             = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/default/${local.frontend_service_name}"
   frontend_service_deployment_arn  = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service-deployment/default/${local.frontend_service_name}/*"
   frontend_service_revision_arn    = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service-revision/default/${local.frontend_service_name}/*"

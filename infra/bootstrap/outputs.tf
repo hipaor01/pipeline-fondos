@@ -38,6 +38,16 @@ output "artifact_bucket_name" {
   value       = local.artifact_bucket_name
 }
 
+output "capture_permissions_boundary_arn" {
+  description = "Permissions boundary de los roles de ejecución de captura."
+  value       = aws_iam_policy.capture_execution_boundary.arn
+}
+
+output "capture_documents_bucket" {
+  description = "Bucket autorizado para captura."
+  value       = var.capture_documents_bucket
+}
+
 output "lambda_execution_permissions_boundary_arn" {
   description = "ARN de la frontera máxima de permisos para el rol de ejecución Lambda."
   value       = aws_iam_policy.lambda_execution_boundary.arn

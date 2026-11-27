@@ -32,18 +32,29 @@ La inspección no modifica el bucket ni demuestra por sí sola todas las políti
 y vías de acceso. Si falta alguna configuración o aparece un error, investigarlo
 antes de usar el bucket; no aplicar cambios sobre recursos de otra persona.
 
-Por defecto Terraform usa estado local en este directorio. Conservarlo y
-respaldarlo; antes de compartirlo, acordar y migrar a un backend remoto con una
-clave independiente. Nunca inicializar otro estado para administrar el mismo
-bucket. No guardar estado ni credenciales en Git.
+Terraform usa el backend S3 compartido con una clave exclusiva:
+`pipeline-fondos/dev/storage/terraform.tfstate`. El bucket del backend es el
+creado por `infra/bootstrap` y se proporciona durante `terraform init`; el
+lockfile nativo de S3 evita aplicaciones concurrentes. Nunca inicializar otro
+estado para administrar el mismo bucket documental ni guardar estado o
+credenciales en Git.
 
 ```bash
-terraform -chdir=infra/environments/dev/storage init
+export PF_STATE_BUCKET='pipeline-fondos-terraform-state-065451207233'
+terraform -chdir=infra/environments/dev/storage init \
+  -backend-config="bucket=$PF_STATE_BUCKET"
 terraform -chdir=infra/environments/dev/storage validate
 terraform -chdir=infra/environments/dev/storage test
 terraform -chdir=infra/environments/dev/storage plan \
-  -var='bucket_name=NOMBRE-DEL-BUCKET' -var='create_bucket=true'
+  -var='bucket_name=NOMBRE-DEL-BUCKET' -var='create_bucket=true' \
+  -out=storage.tfplan
+terraform -chdir=infra/environments/dev/storage apply storage.tfplan
 ```
+
+Si otro estado local ya administra el bucket, no ejecutar los comandos
+anteriores sobre un backend vacío. Inicializar con `-migrate-state` después de
+revisar y respaldar ese estado. En este checkout no había estado local al
+configurar el backend remoto.
 
 Para un bucket existente omitir `create_bucket=true`. Revisar el plan y la
 cuenta antes de aplicar. Para conectar captura, pasar el output `bucket_name`

@@ -7,6 +7,9 @@ project_name = "pipeline-fondos"
 # state_bucket_name = "pipeline-fondos-terraform-state-123456789012"
 # artifact_bucket_name = "pipeline-fondos-artifacts-123456789012"
 
+# Bucket existente, privado, cifrado y versionado que usará la captura.
+capture_documents_bucket = "REEMPLAZAR-CON-BUCKET-COMPROBADO"
+
 # El repositorio actual usa subjects inmutables y despliega únicamente desde main.
 github_oidc_subject = "repo:hipaor01@54775548/pipeline-fondos@1465066430:ref:refs/heads/main"
 deployment_environment = "dev"

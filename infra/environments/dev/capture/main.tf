@@ -24,10 +24,11 @@ resource "aws_cloudwatch_log_group" "lambda" {
 }
 
 resource "aws_iam_role" "lambda" {
-  for_each           = local.gestoras
-  name               = "${local.name}-${each.key}"
-  assume_role_policy = data.aws_iam_policy_document.lambda_trust.json
-  tags               = local.tags
+  for_each             = local.gestoras
+  name                 = "${local.name}-${each.key}"
+  assume_role_policy   = data.aws_iam_policy_document.lambda_trust.json
+  permissions_boundary = var.permissions_boundary_arn
+  tags                 = local.tags
 }
 
 data "aws_iam_policy_document" "lambda" {
@@ -85,9 +86,10 @@ data "aws_iam_policy_document" "states_trust" {
 }
 
 resource "aws_iam_role" "states" {
-  name               = "${local.name}-states"
-  assume_role_policy = data.aws_iam_policy_document.states_trust.json
-  tags               = local.tags
+  name                 = "${local.name}-states"
+  assume_role_policy   = data.aws_iam_policy_document.states_trust.json
+  permissions_boundary = var.permissions_boundary_arn
+  tags                 = local.tags
 }
 
 resource "aws_iam_role_policy" "states" {
@@ -159,9 +161,10 @@ data "aws_iam_policy_document" "scheduler_trust" {
 }
 
 resource "aws_iam_role" "scheduler" {
-  name               = "${local.name}-scheduler"
-  assume_role_policy = data.aws_iam_policy_document.scheduler_trust.json
-  tags               = local.tags
+  name                 = "${local.name}-scheduler"
+  assume_role_policy   = data.aws_iam_policy_document.scheduler_trust.json
+  permissions_boundary = var.permissions_boundary_arn
+  tags                 = local.tags
 }
 
 resource "aws_iam_role_policy" "scheduler" {
