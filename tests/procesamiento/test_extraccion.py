@@ -1,12 +1,14 @@
 """Etapa de extracción de principio a fin: S3 en memoria, Bedrock simulado y PostgreSQL real."""
 
 import hashlib
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 
 from api.models.fondo import FondoDetalle
 from api.models.kid import KidVersion
+from api.repositories.aurora import RepositorioFondosAurora
+from api.repositories.base import ConsultaPaginada, FiltrosFondos, FiltrosKids
 from procesamiento import extraccion
 from procesamiento.almacen import AlmacenS3
 from procesamiento.datos.migraciones import aplicar
@@ -79,31 +81,34 @@ def test_kid_valido_se_audita_y_se_carga(
     )
 
 
-def test_las_vistas_cumplen_los_modelos_de_la_api(
+def test_repositorio_aurora_consulta_las_vistas_con_los_modelos_de_la_api(
     s3, ejecutor, markdown_bestinfond, respuesta_bestinfond
 ):
-    """Contrato C4: lo que devuelven las vistas valida contra los modelos Pydantic de P3."""
+    """Contrato C4: el repositorio de P3 consulta las vistas creadas por P2."""
     clave = _subir_markdown(s3, markdown_bestinfond)
     extraccion.handler(
         evento_sqs(clave),
         dependencias=_dependencias(s3, ejecutor, BedrockFalso(respuesta_bestinfond)),
     )
 
-    def con_gestora(fila):
-        fila = dict(fila)
-        fila["gestora"] = {
-            "codigo": fila.pop("gestora_codigo"),
-            "nombre": fila.pop("gestora_nombre"),
-        }
-        return fila
-
-    [kid] = ejecutor.ejecutar("SELECT * FROM api_kid_version")
-    KidVersion.model_validate(con_gestora(kid))
-    [fondo] = ejecutor.ejecutar("SELECT * FROM api_fondo")
-    assert (
-        FondoDetalle.model_validate(con_gestora(fondo)).fecha_ultimo_kid.isoformat()
-        == "2025-12-31"
+    repositorio = RepositorioFondosAurora(ejecutor)
+    gestoras = repositorio.listar_gestoras(ConsultaPaginada())
+    fondos = repositorio.listar_fondos(
+        FiltrosFondos(gestora="bestinver"), ConsultaPaginada()
     )
+    fondo = repositorio.obtener_fondo("ES0114673033")
+    kids = repositorio.listar_kids(
+        FiltrosKids(fecha_documento=date(2025, 12, 31)), ConsultaPaginada()
+    )
+
+    assert gestoras.total == 3
+    assert fondos.total == 1 and fondos.elementos[0].isin == "ES0114673033"
+    assert (
+        isinstance(fondo, FondoDetalle)
+        and fondo.fecha_ultimo_kid
+        and fondo.fecha_ultimo_kid.isoformat() == "2025-12-31"
+    )
+    assert kids.total == 1 and isinstance(kids.elementos[0], KidVersion)
 
 
 def test_reentrega_del_mensaje_no_duplica_ni_llama_a_bedrock(

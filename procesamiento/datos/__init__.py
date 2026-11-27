@@ -1,1 +1,1 @@
-"""Acceso a Aurora PostgreSQL: ejecutores SQL, upserts idempotentes y migraciones."""
+"""Repositorios y migraciones de la capa de procesamiento."""

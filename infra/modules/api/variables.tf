@@ -108,6 +108,36 @@ variable "lambda_environment_variables" {
   default     = {}
 }
 
+variable "database_cluster_arn" {
+  description = "ARN del clúster Aurora consultado mediante RDS Data API."
+  type        = string
+
+  validation {
+    condition     = can(regex("^arn:aws[a-zA-Z-]*:rds:[a-z0-9-]+:[0-9]{12}:cluster:[A-Za-z0-9-]+$", var.database_cluster_arn))
+    error_message = "database_cluster_arn debe ser el ARN de un clúster RDS."
+  }
+}
+
+variable "database_secret_arn" {
+  description = "ARN del secreto de credenciales gestionado por RDS."
+  type        = string
+
+  validation {
+    condition     = can(regex("^arn:aws[a-zA-Z-]*:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:.+$", var.database_secret_arn))
+    error_message = "database_secret_arn debe ser el ARN de un secreto de Secrets Manager."
+  }
+}
+
+variable "database_name" {
+  description = "Nombre de la base de datos PostgreSQL."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9_]{0,62}$", var.database_name))
+    error_message = "database_name debe empezar por letra y contener solo minúsculas, números y _."
+  }
+}
+
 variable "lambda_permissions_boundary_arn" {
   description = "ARN de la permissions boundary obligatoria para el rol de ejecución Lambda."
   type        = string

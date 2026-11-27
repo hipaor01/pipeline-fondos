@@ -6,13 +6,17 @@ con bloqueo mediante lockfile.
 
 ## Despliegue mediante CD
 
-El workflow `.github/workflows/deploy-api-dev.yml` se encarga de:
+El workflow orquestador `.github/workflows/deploy-backend-dev.yml` ejecuta
+primero `.github/workflows/deploy-processing-dev.yml` y, solo después de que
+termine correctamente el despliegue y las migraciones, invoca
+`.github/workflows/deploy-api-dev.yml`. Este último se encarga de:
 
 - ejecutar los tests y validaciones;
 - aplicar el root `dev/artifacts`;
 - construir y subir el ZIP versionado;
 - proporcionar `lambda_package` a este root;
-- aplicar la infraestructura de la API y comprobar `/health`.
+- leer del estado de procesamiento los ARN de Aurora y Secrets Manager;
+- aplicar la infraestructura de la API y comprobar `/health` y `/gestoras`.
 
 El frontend usa el root separado `dev/frontend` y el workflow
 `.github/workflows/publish-frontend-dev.yml`. Este crea el repositorio ECR,
@@ -22,7 +26,12 @@ separados evitan ciclos entre el registro, la imagen y el servicio.
 
 La pipeline necesita que `infra/bootstrap` esté aplicado y que la variable de
 repositorio `AWS_DEPLOY_ROLE_ARN` contenga el output
-`github_actions_cd_role_arn`.
+`github_actions_cd_role_arn`. El orquestador despliega `dev/processing` antes
+de que este estado consuma sus outputs de base de datos.
+
+Después de incorporar cambios en `infra/bootstrap/lambda_boundary.tf`, aplica
+primero `infra/bootstrap` de forma administrativa. La permissions boundary debe
+permitir Data API y Secrets Manager antes de desplegar la nueva Lambda del API.
 
 ## Uso local opcional
 
@@ -56,6 +65,7 @@ Tras el despliegue:
 ```bash
 API_ENDPOINT=$(terraform -chdir=infra/environments/dev output -raw api_endpoint)
 curl "${API_ENDPOINT}/health"
+curl "${API_ENDPOINT}/gestoras?tamano_pagina=1"
 ```
 
 No guardes credenciales ni secretos en `terraform.tfvars`; utiliza la cadena

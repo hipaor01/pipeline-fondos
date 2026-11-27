@@ -97,7 +97,11 @@ Fixtures: dos KID y una ficha reales de Bestinver, el Markdown del KID de Bestin
 
 ## Despliegue
 
-Workflow `.github/workflows/deploy-processing-dev.yml`: en cada PR, tests con PostgreSQL 16, `terraform validate` y `terraform test`; en `main`, ECR → imagen ARM64 por digest → `terraform apply` de `infra/environments/dev/processing` → migraciones.
+Workflow reutilizable `.github/workflows/deploy-processing-dev.yml`: en cada PR,
+tests con PostgreSQL 16, `terraform validate` y `terraform test`. En `main`, el
+orquestador `.github/workflows/deploy-backend-dev.yml` lo invoca antes que el API:
+ECR → imagen ARM64 por digest → `terraform apply` de
+`infra/environments/dev/processing` → migraciones.
 
 ## Integración con P1 y P3
 

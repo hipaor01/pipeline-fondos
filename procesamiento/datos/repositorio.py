@@ -7,7 +7,7 @@ versión del KID, o no se carga nada. Repetir la carga del mismo JSON no crea fi
 from dataclasses import dataclass
 from typing import Any
 
-from procesamiento.datos.ejecutor import EjecutorSQL
+from database.ejecutor import EjecutorSQL
 from procesamiento.esquema import Estado, Origen, ResultadoExtraccion
 
 SQL_DOCUMENTO_CARGADO = """

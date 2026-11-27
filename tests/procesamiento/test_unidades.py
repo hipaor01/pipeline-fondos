@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
+from database.ejecutor import _a_parametro_data_api
 from procesamiento import eventos, rutas
 from procesamiento.bedrock import ExtractorBedrock, RespuestaIncompleta
-from procesamiento.datos.ejecutor import _a_parametro_data_api
 from procesamiento.datos.migraciones import sentencias
 from procesamiento.esquema import (
     ESQUEMA_BEDROCK,

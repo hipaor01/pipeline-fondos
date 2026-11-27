@@ -1,0 +1,65 @@
+name: Deploy backend to dev
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/actions/publish-ecr-image/**"
+      - ".github/workflows/deploy-api-dev.yml"
+      - ".github/workflows/deploy-backend-dev.yml"
+      - ".github/workflows/deploy-processing-dev.yml"
+      - "api/**"
+      - "contracts/**"
+      - "database/**"
+      - "infra/bootstrap/**"
+      - "infra/environments/dev/*.tf"
+      - "infra/environments/dev/artifacts/**"
+      - "infra/environments/dev/processing/**"
+      - "infra/environments/dev/processing-registry/**"
+      - "infra/modules/api/**"
+      - "infra/modules/artifacts/**"
+      - "infra/modules/container_registry/**"
+      - "infra/modules/database/**"
+      - "infra/modules/processing/**"
+      - "procesamiento/**"
+      - "pyproject.toml"
+      - "tests/api/**"
+      - "tests/procesamiento/**"
+      - "uv.lock"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-backend-dev
+  cancel-in-progress: false
+
+jobs:
+  require-main:
+    name: Require main branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject deployment from another branch
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "Backend deployments are only allowed from main." >&2
+          exit 1
+
+  processing:
+    name: Processing, database and migrations
+    needs: require-main
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/deploy-processing-dev.yml
+    secrets: inherit
+
+  api:
+    name: API and database smoke test
+    needs: processing
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/deploy-api-dev.yml
+    secrets: inherit

@@ -1,10 +1,13 @@
 name: Deploy API to dev
 
 on:
+  workflow_call:
   pull_request:
     paths:
+      - ".github/workflows/deploy-backend-dev.yml"
       - ".github/workflows/deploy-api-dev.yml"
       - "api/**"
+      - "database/*.py"
       - "infra/bootstrap/**"
       - "infra/environments/dev/*.tf"
       - "infra/environments/dev/artifacts/**"
@@ -13,21 +16,6 @@ on:
       - "pyproject.toml"
       - "tests/api/**"
       - "uv.lock"
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/deploy-api-dev.yml"
-      - "api/**"
-      - "infra/bootstrap/**"
-      - "infra/environments/dev/*.tf"
-      - "infra/environments/dev/artifacts/**"
-      - "infra/modules/api/**"
-      - "infra/modules/artifacts/**"
-      - "pyproject.toml"
-      - "tests/api/**"
-      - "uv.lock"
-  workflow_dispatch:
-
 permissions:
   contents: read
 
@@ -63,7 +51,7 @@ jobs:
         run: uv sync --group dev --locked
 
       - name: Lint Python
-        run: uv run --group dev ruff check api tests/api
+        run: uv run --group dev ruff check api database/*.py tests/api
 
       - name: Type-check API
         run: uv run --group dev mypy
@@ -79,6 +67,14 @@ jobs:
 
       - name: Check Terraform formatting
         run: terraform fmt -check -recursive infra
+
+      - name: Validate API Terraform
+        run: |
+          terraform -chdir=infra/environments/dev init -backend=false -input=false
+          terraform -chdir=infra/environments/dev validate
+          terraform -chdir=infra/modules/api init -backend=false -input=false
+          terraform -chdir=infra/modules/api validate
+          terraform -chdir=infra/modules/api test
 
   deploy:
     name: Package and deploy
@@ -172,6 +168,7 @@ jobs:
 
           rm -f build/lambda/.lock
           cp -R api build/lambda/api
+          cp -R database build/lambda/database
           (cd build/lambda && zip -X -q -r ../api.zip .)
           zip -T build/api.zip
 
@@ -235,6 +232,14 @@ jobs:
             --retry-all-errors \
             --retry-delay 3 \
             "${API_ENDPOINT}/health"
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --retry 10 \
+            --retry-all-errors \
+            --retry-delay 3 \
+            "${API_ENDPOINT}/gestoras?tamano_pagina=1"
 
       - name: Deployment summary
         env:
@@ -246,4 +251,5 @@ jobs:
             echo
             echo "- Endpoint: ${API_ENDPOINT}"
             echo "- Artifact: ${ARTIFACT_KEY}"
+            echo "- Data source: Aurora via RDS Data API"
           } >> "${GITHUB_STEP_SUMMARY}"

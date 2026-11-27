@@ -13,7 +13,7 @@ from api.services.fondos import ServicioFondos
 
 class TestAplicacionFastAPI(unittest.TestCase):
     def setUp(self) -> None:
-        self.cliente = TestClient(crear_aplicacion())
+        self.cliente = TestClient(crear_aplicacion(entorno={}))
 
     def tearDown(self) -> None:
         self.cliente.close()

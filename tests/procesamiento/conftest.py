@@ -234,7 +234,7 @@ def postgres_dsn() -> Iterator[str]:
 @pytest.fixture
 def ejecutor(postgres_dsn: str) -> Iterator[Any]:
     """Base de datos limpia y migrada para cada test."""
-    from procesamiento.datos.ejecutor import EjecutorPsycopg
+    from database.ejecutor import EjecutorPsycopg
     from procesamiento.datos.migraciones import aplicar
 
     admin = EjecutorPsycopg(postgres_dsn)

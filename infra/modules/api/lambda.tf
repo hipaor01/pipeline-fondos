@@ -16,7 +16,15 @@ resource "aws_lambda_function" "api" {
   timeout       = var.lambda_timeout_seconds
 
   environment {
-    variables = var.lambda_environment_variables
+    variables = merge(
+      var.lambda_environment_variables,
+      {
+        REPOSITORIO_FONDOS = "aurora"
+        DB_CLUSTER_ARN     = var.database_cluster_arn
+        DB_SECRET_ARN      = var.database_secret_arn
+        DB_NAME            = var.database_name
+      }
+    )
   }
 
   tags = merge(
@@ -28,6 +36,7 @@ resource "aws_lambda_function" "api" {
 
   depends_on = [
     aws_cloudwatch_log_group.lambda,
+    aws_iam_role_policy.lambda_database,
     aws_iam_role_policy.lambda_logging,
   ]
 }
