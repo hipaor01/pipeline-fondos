@@ -1,14 +1,15 @@
 # Capa de procesamiento (P2):
 #
-#   S3 raw/*.pdf ──EventBridge──> SQS pdf ──> Lambda pdf-markdown ──> S3 processed/markdown/*.md
-#   S3 processed/markdown/*.md ──EventBridge──> SQS markdown ──> Lambda extraccion ──> Bedrock
+#   S3 raw/*_kid.pdf ──notificación S3──> SQS pdf ──> Lambda pdf-markdown ──> S3 processed/markdown/*.md
+#   S3 processed/markdown/*.md ──notificación S3──> SQS markdown ──> Lambda extraccion ──> Bedrock
 #                                                                    ├─> S3 processed/structured/*.json
 #                                                                    └─> Aurora (Data API)
 #
-# Se usa EventBridge y no aws_s3_bucket_notification porque la notificación es un
-# único recurso por bucket (propiedad de P1): con EventBridge cada consumidor crea
-# sus propias reglas sin tocar la configuración del bucket. P1 solo debe activar
-# `eventbridge = true` en el bucket.
+# Transporte acordado en el contrato C1 v1 (contracts/C1_PROPUESTA.md): notificación
+# nativa S3 ObjectCreated -> SQS estándar. La configuración de notificaciones de un
+# bucket es UN único recurso que reemplaza todo lo anterior; según
+# contracts/INTEGRACION_P1_P2_P3_PROPUESTA.md la gestiona este estado (P2) y nadie
+# más debe declarar otro aws_s3_bucket_notification para el mismo bucket.
 
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
@@ -37,7 +38,8 @@ locals {
       function_name = "${local.prefix}-pdf-markdown"
       handler       = "procesamiento.markdown.handler"
       description   = "PDF raw/ -> Markdown processed/markdown/ (contrato C2)"
-      key_pattern   = "raw/*.pdf"
+      key_prefix    = "raw/"
+      key_suffix    = "_kid.pdf" # C1: solo KID; las fichas se conservan pero no se procesan
       memory_mb     = var.markdown_memory_mb
       timeout_s     = var.markdown_timeout_seconds
       concurrency   = var.markdown_max_concurrency
@@ -46,7 +48,8 @@ locals {
       function_name = "${local.prefix}-extraccion"
       handler       = "procesamiento.extraccion.handler"
       description   = "Markdown -> Bedrock -> JSON de auditoría y Aurora (contratos C3 y C4)"
-      key_pattern   = "processed/markdown/*.md"
+      key_prefix    = "processed/markdown/"
+      key_suffix    = ".md"
       memory_mb     = var.extraction_memory_mb
       timeout_s     = var.extraction_timeout_seconds
       concurrency   = var.extraction_max_concurrency
@@ -111,52 +114,32 @@ resource "aws_sqs_queue_redrive_allow_policy" "dlq" {
   })
 }
 
-# ------------------------------------------------------------------ EventBridge
-
-resource "aws_cloudwatch_event_rule" "object_created" {
-  for_each = local.stages
-
-  name        = "${each.value.function_name}-object-created"
-  description = "S3 Object Created ${each.value.key_pattern} en ${var.documents_bucket_name}"
-
-  event_pattern = jsonencode({
-    source        = ["aws.s3"]
-    "detail-type" = ["Object Created"]
-    detail = {
-      bucket = { name = [var.documents_bucket_name] }
-      object = { key = [{ wildcard = each.value.key_pattern }] }
-    }
-  })
-
-  tags = merge(local.common_tags, { Stage = each.key })
-}
-
-resource "aws_cloudwatch_event_target" "queue" {
-  for_each = local.stages
-
-  rule      = aws_cloudwatch_event_rule.object_created[each.key].name
-  target_id = "sqs"
-  arn       = aws_sqs_queue.this[each.key].arn
-}
+# ------------------------------------------------------------------ Notificaciones S3
 
 data "aws_iam_policy_document" "queue" {
   for_each = local.stages
 
   statement {
-    sid       = "AllowEventBridgeRule"
+    sid       = "AllowDocumentsBucket"
     effect    = "Allow"
     actions   = ["sqs:SendMessage"]
     resources = [aws_sqs_queue.this[each.key].arn]
 
     principals {
       type        = "Service"
-      identifiers = ["events.amazonaws.com"]
+      identifiers = ["s3.amazonaws.com"]
     }
 
     condition {
       test     = "ArnEquals"
       variable = "aws:SourceArn"
-      values   = [aws_cloudwatch_event_rule.object_created[each.key].arn]
+      values   = [local.bucket_arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [local.account_id]
     }
   }
 }
@@ -166,6 +149,26 @@ resource "aws_sqs_queue_policy" "this" {
 
   queue_url = aws_sqs_queue.this[each.key].id
   policy    = data.aws_iam_policy_document.queue[each.key].json
+}
+
+# Al crearla, S3 valida cada destino enviando un s3:TestEvent: la política de las
+# colas debe existir antes. Los handlers ignoran ese evento.
+resource "aws_s3_bucket_notification" "documents" {
+  count  = var.manage_bucket_notifications ? 1 : 0
+  bucket = var.documents_bucket_name
+
+  dynamic "queue" {
+    for_each = local.stages
+    content {
+      id            = "${local.prefix}-${queue.key}"
+      queue_arn     = aws_sqs_queue.this[queue.key].arn
+      events        = ["s3:ObjectCreated:*"]
+      filter_prefix = queue.value.key_prefix
+      filter_suffix = queue.value.key_suffix
+    }
+  }
+
+  depends_on = [aws_sqs_queue_policy.this]
 }
 
 # ------------------------------------------------------------------ Lambda

@@ -23,12 +23,13 @@ module "database" {
 module "processing" {
   source = "../../../modules/processing"
 
-  project_name             = var.project_name
-  environment              = local.environment
-  documents_bucket_name    = var.documents_bucket_name
-  image_uri                = var.image_uri
-  lambda_architecture      = var.lambda_architecture
-  permissions_boundary_arn = local.permissions_boundary_arn
+  project_name                = var.project_name
+  environment                 = local.environment
+  documents_bucket_name       = var.documents_bucket_name
+  manage_bucket_notifications = var.manage_bucket_notifications
+  image_uri                   = var.image_uri
+  lambda_architecture         = var.lambda_architecture
+  permissions_boundary_arn    = local.permissions_boundary_arn
 
   bedrock_model_id = var.bedrock_model_id
 

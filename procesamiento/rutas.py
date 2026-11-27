@@ -58,9 +58,9 @@ class RutaDocumento:
         return f"{self.gestora}/{self.fecha}/{self.nombre}"
 
 
-# Tipos que genera hoy el scraper de Bestinver; el metadato `tipo_documento`
-# de C1 tiene prioridad sobre esta deducción.
-TIPOS_CONOCIDOS = ("datos_fundamentales", "ficha_fondo")
+# Tipos de C1 v1 (`kid`, `ficha_fondo`) y el sufijo histórico `datos_fundamentales`;
+# el metadato `tipo-documento` tiene prioridad sobre esta deducción.
+TIPOS_CONOCIDOS = ("kid", "ficha_fondo", "datos_fundamentales")
 
 
 def _parsear(clave: str, prefijo: str, extension: str) -> RutaDocumento:

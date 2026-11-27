@@ -1,6 +1,7 @@
 """Etapa de extracción de principio a fin: S3 en memoria, Bedrock simulado y PostgreSQL real."""
 
 import hashlib
+from datetime import UTC, datetime
 
 import pytest
 
@@ -15,9 +16,7 @@ from tests.procesamiento.conftest import BUCKET, BedrockFalso, evento_sqs
 SHA = hashlib.sha256(b"pdf de bestinfond").hexdigest()
 
 
-def _subir_markdown(
-    s3, markdown, fecha="20261119", nombre="bestinfond_datos_fundamentales", sha=SHA
-):
+def _subir_markdown(s3, markdown, fecha="20261119", nombre="bestinfond_kid", sha=SHA):
     clave = f"processed/markdown/bestinver/{fecha}/{nombre}.md"
     s3.put_object(
         Bucket=BUCKET,
@@ -31,7 +30,7 @@ def _subir_markdown(
             "gestora": "bestinver",
             "tipo-documento": nombre.split("_", 1)[1],
             "url-origen": "https://www.bestinver.es/x.pdf",
-            "fecha-descarga": "2026-11-19T06:00:00+00:00",
+            "fecha-descarga-utc": "2026-11-19T06:00:00Z",
             "correlation-id": "corr-1",
             "modo-ocr": "nunca",
             "conversor": "pymupdf4llm-2.1",
@@ -45,7 +44,7 @@ def _dependencias(s3, ejecutor, bedrock):
         almacen=AlmacenS3(s3),
         extractor=bedrock,
         repositorio=RepositorioKids(ejecutor),
-        tipos_kid=frozenset({"datos_fundamentales"}),
+        tipos_kid=frozenset({"kid"}),
         max_intentos=3,
     )
 
@@ -119,6 +118,7 @@ def test_reentrega_del_mensaje_no_duplica_ni_llama_a_bedrock(
 
     assert bedrock.llamadas == 1
     assert _cuenta(ejecutor, "kid_version") == 1 and _cuenta(ejecutor, "documento") == 1
+    assert _cuenta(ejecutor, "documento_observacion") == 1
 
 
 def test_mismo_pdf_descargado_otro_dia_no_crea_otra_version(
@@ -140,6 +140,17 @@ def test_mismo_pdf_descargado_otro_dia_no_crea_otra_version(
         clave_dia2.replace("markdown", "structured").replace(".md", ".json")
     )
     assert auditoria["estado"] == "VALID" and auditoria["duplicado"] is True
+    # La segunda descarga queda como procedencia aunque el contenido ya existiera (C1 v1).
+    claves = [
+        f["s3_key"]
+        for f in ejecutor.ejecutar(
+            "SELECT s3_key FROM documento_observacion ORDER BY id"
+        )
+    ]
+    assert claves == [
+        "raw/bestinver/20261119/bestinfond_kid.pdf",
+        "raw/bestinver/20261120/bestinfond_kid.pdf",
+    ]
 
 
 def test_cargar_dos_veces_el_mismo_resultado_es_idempotente(
@@ -225,4 +236,63 @@ def test_error_de_bedrock_se_reintenta_y_en_el_ultimo_intento_se_audita(
 
 def test_migraciones_son_idempotentes(ejecutor):
     assert aplicar(ejecutor) == []
-    assert _cuenta(ejecutor, "schema_migraciones") == 2
+    assert _cuenta(ejecutor, "schema_migraciones") == 3
+
+
+def test_mismo_contenido_reintentado_por_p1_es_otra_observacion(
+    s3, ejecutor, markdown_bestinfond, respuesta_bestinfond
+):
+    """P1 puede subir otra versión física con los mismos bytes: mismo documento, nueva procedencia."""
+    dep = _dependencias(s3, ejecutor, BedrockFalso(respuesta_bestinfond))
+    clave = _subir_markdown(s3, markdown_bestinfond)
+    extraccion.handler(evento_sqs(clave), dependencias=dep)
+
+    repositorio = RepositorioKids(ejecutor)
+    resultado = extraccion.ResultadoExtraccion.model_validate(
+        s3.json(_clave_json(clave))
+    )
+    reintento = resultado.source.model_copy(
+        update={"pdf_version_id": "v2", "correlation_id": "corr-2"}
+    )
+
+    assert repositorio.registrar_observacion(reintento, _clave_json(clave)) is True
+    assert (
+        repositorio.registrar_observacion(reintento, _clave_json(clave)) is False
+    )  # evento repetido
+    assert (
+        _cuenta(ejecutor, "documento") == 1
+        and _cuenta(ejecutor, "documento_observacion") == 2
+    )
+    [fila] = ejecutor.ejecutar(
+        "SELECT fecha_descarga FROM documento_observacion WHERE s3_version_id = 'v2'"
+    )
+    assert datetime.fromisoformat(fila["fecha_descarga"]) == datetime(
+        2026, 11, 19, 6, tzinfo=UTC
+    )
+
+
+def test_cambio_de_bytes_el_mismo_dia_es_otro_documento(
+    s3, ejecutor, markdown_bestinfond, respuesta_bestinfond
+):
+    """Misma clave raw, nueva versión con otro sha256: se reprocesa y Aurora guarda ambos."""
+    bedrock = BedrockFalso(respuesta_bestinfond)
+    dep = _dependencias(s3, ejecutor, bedrock)
+    extraccion.handler(
+        evento_sqs(_subir_markdown(s3, markdown_bestinfond)), dependencias=dep
+    )
+
+    nuevo_sha = hashlib.sha256(b"KID corregido").hexdigest()
+    respuesta_bestinfond["fecha_documento"] = None
+    respuesta_bestinfond["fecha_documento_evidencia"] = ""
+    bedrock.respuesta = respuesta_bestinfond
+    extraccion.handler(
+        evento_sqs(_subir_markdown(s3, markdown_bestinfond, sha=nuevo_sha)),
+        dependencias=dep,
+    )
+
+    assert bedrock.llamadas == 2
+    assert _cuenta(ejecutor, "documento") == 2 and _cuenta(ejecutor, "kid_version") == 2
+
+
+def _clave_json(clave_md: str) -> str:
+    return clave_md.replace("markdown", "structured").replace(".md", ".json")

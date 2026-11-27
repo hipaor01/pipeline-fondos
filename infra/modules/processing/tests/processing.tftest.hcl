@@ -20,9 +20,6 @@ mock_provider "aws" {
   mock_resource "aws_cloudwatch_log_group" {
     defaults = { arn = "arn:aws:logs:eu-west-3:123456789012:log-group:grupo" }
   }
-  mock_resource "aws_cloudwatch_event_rule" {
-    defaults = { arn = "arn:aws:events:eu-west-3:123456789012:rule/regla" }
-  }
   mock_resource "aws_lambda_function" {
     defaults = { arn = "arn:aws:lambda:eu-west-3:123456789012:function:f" }
   }
@@ -90,13 +87,40 @@ run "colas_y_lambdas" {
   }
 
   assert {
-    condition     = jsondecode(aws_cloudwatch_event_rule.object_created["markdown"].event_pattern).detail.object.key[0].wildcard == "raw/*.pdf"
-    error_message = "La regla de conversión debe filtrar raw/*.pdf (contrato C1)."
+    condition     = one([for q in aws_s3_bucket_notification.documents[0].queue : q if q.filter_prefix == "raw/"]).filter_suffix == "_kid.pdf"
+    error_message = "La notificación de conversión debe filtrar raw/ + _kid.pdf (contrato C1)."
   }
 
   assert {
     condition     = jsonencode(local.s3_write_prefixes["extraccion"]) == jsonencode(["processed/structured/*"])
     error_message = "La extracción solo puede escribir en processed/structured/."
+  }
+}
+
+run "notificacion_completa_del_bucket" {
+  command = apply
+
+  assert {
+    condition     = length(aws_s3_bucket_notification.documents[0].queue) == 2
+    error_message = "La configuración del bucket debe declarar las dos colas de P2 en un único recurso."
+  }
+
+  assert {
+    condition     = one([for q in aws_s3_bucket_notification.documents[0].queue : q if q.filter_prefix == "processed/markdown/"]).filter_suffix == ".md"
+    error_message = "La extracción solo debe recibir processed/markdown/*.md."
+  }
+}
+
+run "sin_gestionar_notificaciones" {
+  command = plan
+
+  variables {
+    manage_bucket_notifications = false
+  }
+
+  assert {
+    condition     = length(aws_s3_bucket_notification.documents) == 0
+    error_message = "Con manage_bucket_notifications = false no se toca el bucket."
   }
 }
 

@@ -5,12 +5,6 @@
 # PROPUESTA DE P2: bootstrap es de P3; revisar y aplicar a mano con
 #   terraform -chdir=infra/bootstrap apply
 
-variable "documents_bucket_name" {
-  description = "Bucket de documentos de P1 que leen y escriben las Lambdas de procesamiento."
-  type        = string
-  default     = "curso-miax-pipeline-fondos"
-}
-
 locals {
   processing_prefix         = "${var.project_name}-${var.deployment_environment}"
   processing_function_names = ["${local.processing_prefix}-pdf-markdown", "${local.processing_prefix}-extraccion"]
@@ -51,13 +45,13 @@ data "aws_iam_policy_document" "processing_boundary" {
   statement {
     sid       = "Documents"
     actions   = ["s3:GetObject", "s3:GetObjectVersion", "s3:PutObject"]
-    resources = ["arn:aws:s3:::${var.documents_bucket_name}/raw/*", "arn:aws:s3:::${var.documents_bucket_name}/processed/*"]
+    resources = ["arn:aws:s3:::${var.capture_documents_bucket}/raw/*", "arn:aws:s3:::${var.capture_documents_bucket}/processed/*"]
   }
 
   statement {
     sid       = "ListDocuments"
     actions   = ["s3:ListBucket"]
-    resources = ["arn:aws:s3:::${var.documents_bucket_name}"]
+    resources = ["arn:aws:s3:::${var.capture_documents_bucket}"]
   }
 
   statement {
@@ -196,13 +190,11 @@ data "aws_iam_policy_document" "github_actions_processing" {
     resources = local.processing_queue_arns
   }
 
+  # P2 gestiona la configuración completa de notificaciones del bucket de documentos.
   statement {
-    sid = "ProcessingRules"
-    actions = [
-      "events:PutRule", "events:DeleteRule", "events:DescribeRule", "events:PutTargets", "events:RemoveTargets",
-      "events:ListTargetsByRule", "events:ListTagsForResource", "events:TagResource", "events:UntagResource",
-    ]
-    resources = ["${format(local.processing_arn_prefix, "events")}:rule/${local.processing_prefix}-*"]
+    sid       = "DocumentBucketNotifications"
+    actions   = ["s3:GetBucketNotification", "s3:PutBucketNotification", "s3:GetBucketVersioning"]
+    resources = ["arn:aws:s3:::${var.capture_documents_bucket}"]
   }
 
   statement {

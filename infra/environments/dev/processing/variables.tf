@@ -11,9 +11,14 @@ variable "project_name" {
 }
 
 variable "documents_bucket_name" {
-  description = "Bucket de documentos de P1 (raw/ y processed/). Pendiente de que P1 lo gestione en Terraform."
+  description = "Bucket de documentos de P1 (output bucket_name de dev/storage; variable de repositorio CAPTURE_DOCUMENTS_BUCKET)."
   type        = string
-  default     = "curso-miax-pipeline-fondos"
+}
+
+variable "manage_bucket_notifications" {
+  description = "P2 gestiona la configuración completa de notificaciones del bucket (contracts/INTEGRACION_P1_P2_P3_PROPUESTA.md)."
+  type        = bool
+  default     = true
 }
 
 variable "image_uri" {

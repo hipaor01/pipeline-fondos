@@ -57,7 +57,8 @@ def _origen(
         gestora=metadatos.get("gestora") or ruta.gestora,
         tipo_documento=metadatos.get("tipo-documento") or ruta.tipo_documento,
         url_origen=metadatos.get("url-origen"),
-        fecha_descarga=metadatos.get("fecha-descarga"),
+        fecha_descarga=metadatos.get("fecha-descarga-utc")
+        or metadatos.get("fecha-descarga"),
         correlation_id=metadatos.get("correlation-id") or "sin-correlation-id",
         pdf_bucket=metadatos.get("pdf-bucket") or objeto.bucket,
         pdf_key=metadatos.get("pdf-key") or ruta.clave_raw,
@@ -139,6 +140,10 @@ def procesar(objeto: eventos.ObjetoS3, dep: Dependencias, intento: int) -> str:
     if previo:
         if previo.estado is Estado.VALID and not previo.duplicado:
             dep.repositorio.guardar(previo, ruta.clave_estructurada)
+        elif previo.estado is Estado.VALID:
+            dep.repositorio.registrar_observacion(
+                previo.source, ruta.clave_estructurada
+            )
         return terminar(previo, f"{previo.estado.value}_PREVIO")
 
     base: dict[str, Any] = {"source": origen, "iniciado_en": cronometro.inicio_utc}
@@ -161,8 +166,10 @@ def procesar(objeto: eventos.ObjetoS3, dep: Dependencias, intento: int) -> str:
         _guardar_json(dep, objeto.bucket, ruta, r)
         return terminar(r)
 
-    # 3. Mismo PDF ya cargado (descargado otro día con otra clave).
+    # 3. Mismo PDF ya cargado (descargado otro día o reintento de P1): no se llama a
+    #    Bedrock, pero se guarda esta observación (procedencia) en Aurora.
     if dep.repositorio.documento_cargado(origen.pdf_sha256):
+        dep.repositorio.registrar_observacion(origen, ruta.clave_estructurada)
         r = ResultadoExtraccion(
             **base,
             estado=Estado.VALID,
@@ -251,9 +258,7 @@ def dependencias_desde_entorno() -> Dependencias:
                 entorno.get("DB_NAME", "fondos"),
             )
         ),
-        tipos_kid=frozenset(
-            json.loads(entorno.get("TIPOS_KID", '["datos_fundamentales"]'))
-        ),
+        tipos_kid=frozenset(json.loads(entorno.get("TIPOS_KID", '["kid"]'))),
         max_intentos=int(entorno.get("SQS_MAX_RECEIVE_COUNT", "3")),
     )
 
@@ -272,24 +277,24 @@ def handler(
         dependencias = _DEPENDENCIAS
     fallos = []
     for mensaje in eventos.leer_registros(evento):
-        if mensaje.objeto is None:
-            continue
         try:
-            procesar(mensaje.objeto, dependencias, mensaje.intentos)
-        except rutas.ClaveNoValida as error:
-            log(
-                "ERROR",
-                "Clave fuera del contrato C2; se descarta",
-                error=str(error),
-                clave=mensaje.objeto.clave,
-            )
-            metrica_resultado(ETAPA, "REJECTED", 0)
+            for objeto in mensaje.objetos:
+                try:
+                    procesar(objeto, dependencias, mensaje.intentos)
+                except rutas.ClaveNoValida as error:
+                    log(
+                        "ERROR",
+                        "Clave fuera del contrato C2; se descarta",
+                        error=str(error),
+                        clave=objeto.clave,
+                    )
+                    metrica_resultado(ETAPA, "REJECTED", 0)
         except Exception as error:
             log(
                 "ERROR",
                 "Error técnico; SQS reintentará",
                 error=repr(error),
-                clave=mensaje.objeto.clave,
+                message_id=mensaje.message_id,
                 intento=mensaje.intentos,
             )
             metrica_resultado(ETAPA, "FALLO_INTENTO", 0)

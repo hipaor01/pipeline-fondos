@@ -1,6 +1,7 @@
 """Tests sin dependencias externas: rutas, eventos, esquema, validación y Bedrock."""
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -22,18 +23,16 @@ from tests.procesamiento.conftest import evento_sqs
 
 
 def test_claves_derivadas_de_la_clave_raw():
-    ruta = rutas.desde_clave_raw(
-        "raw/bestinver/20261119/bestinfond_datos_fundamentales.pdf"
-    )
+    ruta = rutas.desde_clave_raw("raw/bestinver/20261119/bestinfond-clase-c_kid.pdf")
     assert (
         ruta.clave_markdown
-        == "processed/markdown/bestinver/20261119/bestinfond_datos_fundamentales.md"
+        == "processed/markdown/bestinver/20261119/bestinfond-clase-c_kid.md"
     )
     assert (
         ruta.clave_estructurada
-        == "processed/structured/bestinver/20261119/bestinfond_datos_fundamentales.json"
+        == "processed/structured/bestinver/20261119/bestinfond-clase-c_kid.json"
     )
-    assert ruta.tipo_documento == "datos_fundamentales"
+    assert ruta.tipo_documento == "kid"
     assert rutas.desde_clave_markdown(ruta.clave_markdown) == ruta
 
 
@@ -54,36 +53,54 @@ def test_claves_fuera_de_contrato(clave):
 # ----------------------------------------------------------------- eventos SQS
 
 
-def test_evento_eventbridge():
-    [mensaje] = eventos.leer_registros(
-        evento_sqs("raw/a/20260101/b_datos_fundamentales.pdf", intentos=2)
+def test_notificacion_s3_con_varios_records_y_clave_codificada():
+    mensaje_sqs = evento_sqs(
+        "raw/cobas/20261127/cobas-selección_kid.pdf",
+        "raw/cobas/20261127/otro fondo_kid.pdf",
+        intentos=2,
+        version_id="v7",
     )
-    assert mensaje.objeto.clave == "raw/a/20260101/b_datos_fundamentales.pdf"
-    assert mensaje.intentos == 2
+    [mensaje] = eventos.leer_registros(mensaje_sqs)
+    assert [o.clave for o in mensaje.objetos] == [
+        "raw/cobas/20261127/cobas-selección_kid.pdf",
+        "raw/cobas/20261127/otro fondo_kid.pdf",
+    ]
+    assert mensaje.objetos[0].version_id == "v7" and mensaje.intentos == 2
 
 
-def test_evento_notificacion_s3_decodifica_la_clave():
+def test_fixture_de_p1_del_evento_nativo():
+    """contracts/events/pdf_created.json (propiedad de P1) se lee tal cual."""
+    cuerpo = (
+        Path(__file__).parents[2] / "contracts/events/pdf_created.json"
+    ).read_text()
+    [mensaje] = eventos.leer_registros(
+        {"Records": [{"messageId": "1", "body": cuerpo}]}
+    )
+    [objeto] = mensaje.objetos
+    assert objeto.clave == "raw/bestinver/20261124/fondo_kid.pdf"
+    assert objeto.version_id == "example-version-id"
+    assert rutas.desde_clave_raw(objeto.clave).tipo_documento == "kid"
+
+
+def test_evento_eventbridge_tambien_se_acepta():
     cuerpo = {
-        "Records": [
-            {
-                "s3": {
-                    "bucket": {"name": "b"},
-                    "object": {"key": "raw/a/20260101/con+espacio.pdf"},
-                }
-            }
-        ]
+        "source": "aws.s3",
+        "detail": {
+            "bucket": {"name": "b"},
+            "object": {"key": "raw/a/20260101/b_kid.pdf"},
+        },
     }
     [mensaje] = eventos.leer_registros(
         {"Records": [{"messageId": "1", "body": json.dumps(cuerpo)}]}
     )
-    assert mensaje.objeto.clave == "raw/a/20260101/con espacio.pdf"
+    assert mensaje.objetos[0].clave == "raw/a/20260101/b_kid.pdf"
 
 
 def test_evento_de_prueba_de_s3_se_ignora():
     [mensaje] = eventos.leer_registros(
         {"Records": [{"messageId": "1", "body": '{"Event": "s3:TestEvent"}'}]}
     )
-    assert mensaje.objeto is None
+    assert mensaje.objetos == []
 
 
 # ----------------------------------------------------------------- esquema

@@ -46,30 +46,62 @@ def convertir(pdf: bytes, modo_ocr: str = "nunca") -> str:
         )
 
 
+# Metadatos de usuario obligatorios del contrato C1 v1 (contracts/C1_PROPUESTA.md).
+METADATOS_C1 = (
+    "gestora",
+    "tipo-documento",
+    "url-origen",
+    "fecha-descarga-utc",
+    "sha256",
+    "correlation-id",
+)
+
+
 def origen_desde_pdf(
     ruta: rutas.RutaDocumento, objeto_s3: eventos.ObjetoS3, pdf: ObjetoLeido
 ) -> Origen:
     m = pdf.metadatos
-    sha_declarado = m.get("sha256")
-    if sha_declarado and sha_declarado != pdf.sha256:
-        log(
-            "WARNING",
-            "El sha256 de los metadatos no coincide con el contenido; se usa el calculado",
-            declarado=sha_declarado,
-            calculado=pdf.sha256,
-            clave=objeto_s3.clave,
-        )
     return Origen(
         gestora=m.get("gestora") or ruta.gestora,
         tipo_documento=m.get("tipo-documento") or ruta.tipo_documento,
         url_origen=m.get("url-origen"),
-        fecha_descarga=m.get("fecha-descarga"),
+        fecha_descarga=m.get("fecha-descarga-utc") or m.get("fecha-descarga"),
         correlation_id=m.get("correlation-id") or str(uuid4()),
         pdf_bucket=objeto_s3.bucket,
         pdf_key=objeto_s3.clave,
         pdf_version_id=pdf.version_id or objeto_s3.version_id,
         pdf_sha256=pdf.sha256,
     )
+
+
+def comprobar_c1(ruta: rutas.RutaDocumento, pdf: ObjetoLeido) -> list[Validacion]:
+    """Fallos del contrato C1: metadatos que faltan, hash o gestora que no cuadran."""
+    m = pdf.metadatos
+    fallos = [
+        Validacion(
+            regla="metadatos_c1", campo=clave, resultado="fallo", detalle="falta"
+        )
+        for clave in METADATOS_C1
+        if not m.get(clave)
+    ]
+    declarado = m.get("sha256")
+    if declarado and declarado.lower() != pdf.sha256:
+        fallos.append(
+            Validacion(
+                regla="sha256",
+                resultado="fallo",
+                detalle=f"declarado {declarado}, calculado {pdf.sha256}",
+            )
+        )
+    if m.get("gestora") and m["gestora"] != ruta.gestora:
+        fallos.append(
+            Validacion(
+                regla="gestora",
+                resultado="fallo",
+                detalle=f"metadato '{m['gestora']}' y clave '{ruta.gestora}'",
+            )
+        )
+    return fallos
 
 
 def procesar(objeto_s3: eventos.ObjetoS3, almacen: AlmacenS3, modo_ocr: str) -> str:
@@ -84,6 +116,23 @@ def procesar(objeto_s3: eventos.ObjetoS3, almacen: AlmacenS3, modo_ocr: str) -> 
         "sha256": pdf.sha256,
     }
 
+    fallos_c1 = comprobar_c1(ruta, pdf)
+    if fallos_c1:
+        motivo = (
+            "sha256_no_coincide"
+            if any(v.regla == "sha256" for v in fallos_c1)
+            else "contrato_c1"
+        )
+        _rechazar(almacen, ruta, origen, motivo, fallos_c1, cronometro)
+        log(
+            "WARNING",
+            "PDF fuera del contrato C1; no se procesa",
+            motivo=motivo,
+            **contexto,
+        )
+        metrica_resultado(ETAPA, "REJECTED", cronometro.ms, origen.correlation_id)
+        return "REJECTED"
+
     existente = almacen.metadatos(objeto_s3.bucket, ruta.clave_markdown)
     if existente and existente.get("pdf-sha256") == pdf.sha256:
         log("INFO", "Markdown ya generado para este PDF; se omite", **contexto)
@@ -95,8 +144,19 @@ def procesar(objeto_s3: eventos.ObjetoS3, almacen: AlmacenS3, modo_ocr: str) -> 
     caracteres = len(markdown.strip())
 
     if caracteres < MIN_CARACTERES:
-        _rechazar_sin_texto(
-            almacen, ruta, origen, caracteres, modo_ocr, conversor, cronometro
+        origen = origen.model_copy(
+            update={"modo_ocr": modo_ocr, "conversor": conversor}
+        )
+        detalle = (
+            f"{caracteres} caracteres con OCR '{modo_ocr}' (mínimo {MIN_CARACTERES})"
+        )
+        _rechazar(
+            almacen,
+            ruta,
+            origen,
+            "markdown_vacio",
+            [Validacion(regla="markdown_legible", resultado="fallo", detalle=detalle)],
+            cronometro,
         )
         log(
             "WARNING",
@@ -120,7 +180,7 @@ def procesar(objeto_s3: eventos.ObjetoS3, almacen: AlmacenS3, modo_ocr: str) -> 
             "gestora": origen.gestora,
             "tipo-documento": origen.tipo_documento,
             "url-origen": origen.url_origen,
-            "fecha-descarga": origen.fecha_descarga,
+            "fecha-descarga-utc": origen.fecha_descarga,
             "correlation-id": origen.correlation_id,
             "modo-ocr": modo_ocr,
             "conversor": conversor,
@@ -138,27 +198,20 @@ def procesar(objeto_s3: eventos.ObjetoS3, almacen: AlmacenS3, modo_ocr: str) -> 
     return "CONVERTIDO"
 
 
-def _rechazar_sin_texto(
+def _rechazar(
     almacen: AlmacenS3,
     ruta: rutas.RutaDocumento,
     origen: Origen,
-    caracteres: int,
-    modo_ocr: str,
-    conversor: str,
+    motivo: str,
+    validaciones: list[Validacion],
     cronometro: Cronometro,
 ) -> None:
-    origen = origen.model_copy(update={"modo_ocr": modo_ocr, "conversor": conversor})
+    """Deja el JSON REJECTED de auditoría (C3); no se reintenta."""
     resultado = ResultadoExtraccion(
         estado=Estado.REJECTED,
-        motivo="markdown_vacio",
+        motivo=motivo,
         source=origen,
-        validaciones=[
-            Validacion(
-                regla="markdown_legible",
-                resultado="fallo",
-                detalle=f"{caracteres} caracteres con OCR '{modo_ocr}' (mínimo {MIN_CARACTERES})",
-            )
-        ],
+        validaciones=validaciones,
         iniciado_en=cronometro.inicio_utc,
         finalizado_en=datetime.now(UTC),
     )
@@ -183,25 +236,25 @@ def handler(
     modo_ocr = os.environ.get("MODO_OCR", "nunca")
     fallos = []
     for mensaje in eventos.leer_registros(evento):
-        if mensaje.objeto is None:
-            continue
         try:
-            procesar(mensaje.objeto, almacen, modo_ocr)
-        except rutas.ClaveNoValida as error:
-            # La regla de EventBridge ya filtra raw/*.pdf; una clave fuera de contrato no mejora reintentando.
-            log(
-                "ERROR",
-                "Clave fuera del contrato C1; se descarta",
-                error=str(error),
-                clave=mensaje.objeto.clave,
-            )
-            metrica_resultado(ETAPA, "REJECTED", 0)
+            for objeto in mensaje.objetos:
+                try:
+                    procesar(objeto, almacen, modo_ocr)
+                except rutas.ClaveNoValida as error:
+                    # La notificación ya filtra raw/ + _kid.pdf; reintentar no lo arregla.
+                    log(
+                        "ERROR",
+                        "Clave fuera del contrato C1; se descarta",
+                        error=str(error),
+                        clave=objeto.clave,
+                    )
+                    metrica_resultado(ETAPA, "REJECTED", 0)
         except Exception as error:
             log(
                 "ERROR",
                 "Error técnico; SQS reintentará",
                 error=repr(error),
-                clave=mensaje.objeto.clave,
+                message_id=mensaje.message_id,
                 intento=mensaje.intentos,
             )
             metrica_resultado(ETAPA, "FALLO_INTENTO", 0)

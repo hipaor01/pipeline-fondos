@@ -10,8 +10,14 @@ variable "environment" {
 }
 
 variable "documents_bucket_name" {
-  description = "Bucket de documentos de P1 (C1). Debe tener activadas las notificaciones a EventBridge."
+  description = "Bucket de documentos de P1 (C1): privado, cifrado y versionado."
   type        = string
+}
+
+variable "manage_bucket_notifications" {
+  description = "Gestionar la configuración COMPLETA de notificaciones del bucket (reemplaza la existente). false para planificar sin tocar el bucket."
+  type        = bool
+  default     = true
 }
 
 variable "documents_bucket_kms_key_arn" {
@@ -77,7 +83,7 @@ variable "database_name" {
 variable "kid_document_types" {
   description = "Valores de tipo_documento que se envían a Bedrock; el resto se audita como REJECTED."
   type        = list(string)
-  default     = ["datos_fundamentales"]
+  default     = ["kid"]
 }
 
 variable "ocr_mode" {

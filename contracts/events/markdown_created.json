@@ -1,40 +1,43 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "pipeline-fondos/events/markdown_created/1.0.0",
-  "title": "C2 - Markdown creado (P2 PDF -> P2 IA)",
-  "description": "Evento 'Object Created' de S3 entregado por EventBridge a la cola SQS de extracción. Clave: processed/markdown/{gestora}/{AAAAMMDD}/{slug}_{tipo}.md. Los metadatos del objeto (x-amz-meta-*) conservan la trazabilidad del PDF; ver 'x-object-metadata'. Escritura idempotente: si ya existe el .md con el mismo pdf-sha256 no se reescribe ni se vuelve a emitir el evento.",
-  "x-eventbridge-pattern": {
-    "source": ["aws.s3"],
-    "detail-type": ["Object Created"],
-    "detail": {
-      "bucket": { "name": ["<bucket de documentos>"] },
-      "object": { "key": [{ "wildcard": "processed/markdown/*.md" }] }
-    }
+  "$id": "pipeline-fondos/events/markdown_created/1.1.0",
+  "title": "C2 - Markdown creado (P2 conversión -> P2 extracción)",
+  "description": "Notificación nativa S3 ObjectCreated -> SQS, el mismo transporte que C1 v1 (ver pdf_created.json). Filtro: prefijo processed/markdown/ y sufijo .md. Clave: processed/markdown/{gestora}/{AAAAMMDD}/{slug}_{tipo}.md, codificada como formulario URL en el evento. Un mensaje puede traer varios Records; se procesan todos con su versionId. Escritura idempotente: si ya existe el .md con el mismo pdf-sha256 no se reescribe ni se emite otro evento. Los metadatos del objeto (x-amz-meta-*) conservan la trazabilidad del PDF; ver 'x-object-metadata'.",
+  "x-s3-notification": {
+    "events": ["s3:ObjectCreated:*"],
+    "filter_prefix": "processed/markdown/",
+    "filter_suffix": ".md"
   },
   "type": "object",
-  "required": ["source", "detail-type", "detail"],
+  "required": ["Records"],
   "properties": {
-    "source": { "const": "aws.s3" },
-    "detail-type": { "const": "Object Created" },
-    "detail": {
-      "type": "object",
-      "required": ["bucket", "object"],
-      "properties": {
-        "bucket": {
-          "type": "object",
-          "required": ["name"],
-          "properties": { "name": { "type": "string" } }
-        },
-        "object": {
-          "type": "object",
-          "required": ["key"],
-          "properties": {
-            "key": {
-              "type": "string",
-              "pattern": "^processed/markdown/[a-z0-9]+(-[a-z0-9]+)*/[0-9]{8}/[a-z0-9][a-z0-9_-]*\\.md$"
-            },
-            "version-id": { "type": "string" },
-            "size": { "type": "integer" }
+    "Records": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["eventName", "s3"],
+        "properties": {
+          "eventName": { "type": "string", "pattern": "^ObjectCreated:" },
+          "s3": {
+            "type": "object",
+            "required": ["bucket", "object"],
+            "properties": {
+              "bucket": {
+                "type": "object",
+                "required": ["name"],
+                "properties": { "name": { "type": "string" } }
+              },
+              "object": {
+                "type": "object",
+                "required": ["key"],
+                "properties": {
+                  "key": { "type": "string", "description": "Codificada como formulario URL; decodificar con unquote_plus" },
+                  "versionId": { "type": "string" },
+                  "size": { "type": "integer" }
+                }
+              }
+            }
           }
         }
       }
@@ -43,13 +46,13 @@
   "x-object-metadata": {
     "pdf-bucket": "Bucket del PDF de origen (C1)",
     "pdf-key": "Clave raw/... del PDF",
-    "pdf-version-id": "VersionId del PDF",
-    "pdf-sha256": "SHA-256 hexadecimal del PDF (obligatorio; clave de idempotencia)",
+    "pdf-version-id": "VersionId exacto del PDF que se convirtió",
+    "pdf-sha256": "SHA-256 del PDF, verificado contra el metadato sha256 de C1 (clave de idempotencia)",
     "gestora": "Código de gestora",
-    "tipo-documento": "datos_fundamentales | ficha_fondo | ...",
+    "tipo-documento": "kid (las fichas no llegan a P2)",
     "url-origen": "URL de la que se descargó el PDF",
-    "fecha-descarga": "ISO 8601 UTC",
-    "correlation-id": "Se propaga desde C1; si no viene se genera uno",
+    "fecha-descarga-utc": "ISO 8601 UTC, copiada de C1",
+    "correlation-id": "Se propaga desde C1",
     "modo-ocr": "nunca | auto | siempre",
     "conversor": "Versión del conversor, p. ej. pymupdf4llm-2.1",
     "convertido-en": "ISO 8601 UTC"

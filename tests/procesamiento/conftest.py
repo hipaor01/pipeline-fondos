@@ -17,6 +17,7 @@ import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote_plus
 
 import pytest
 
@@ -95,18 +96,31 @@ def s3() -> S3EnMemoria:
     return S3EnMemoria()
 
 
-def evento_sqs(clave: str, intentos: int = 1, bucket: str = BUCKET) -> dict:
-    """Mensaje SQS con un evento de EventBridge, como lo entrega la regla real."""
+def evento_sqs(
+    *claves: str, intentos: int = 1, bucket: str = BUCKET, version_id: str | None = None
+) -> dict:
+    """Mensaje SQS con una notificación nativa de S3 (contrato C1 v1).
+
+    La clave va codificada como formulario URL, como la envía S3; varias claves
+    van como varios `Records` del mismo mensaje.
+    """
     cuerpo = {
-        "version": "0",
-        "source": "aws.s3",
-        "detail-type": "Object Created",
-        "detail": {"bucket": {"name": bucket}, "object": {"key": clave, "size": 1}},
+        "Records": [
+            {
+                "eventSource": "aws:s3",
+                "eventName": "ObjectCreated:Put",
+                "s3": {
+                    "bucket": {"name": bucket},
+                    "object": {"key": quote_plus(clave), "versionId": version_id},
+                },
+            }
+            for clave in claves
+        ]
     }
     return {
         "Records": [
             {
-                "messageId": f"msg-{clave}",
+                "messageId": f"msg-{claves[0]}",
                 "body": json.dumps(cuerpo),
                 "attributes": {"ApproximateReceiveCount": str(intentos)},
             }

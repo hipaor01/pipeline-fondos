@@ -155,7 +155,15 @@ class EjecutorPsycopg:
         self, sql: str, parametros: Parametros | None = None
     ) -> list[dict[str, Any]]:
         if parametros:
-            sql = _PARAMETRO.sub(r"%(\1)s", sql.replace("%", "%%"))
+            tipos = {n: _tipo_data_api(v) for n, v in parametros.items()}
+
+            def sustituir(m: re.Match[str]) -> str:
+                tipo = tipos.get(m.group(1))
+                return (
+                    f"CAST(%({m.group(1)})s AS {tipo})" if tipo else f"%({m.group(1)})s"
+                )
+
+            sql = _PARAMETRO.sub(sustituir, sql.replace("%", "%%"))
         with self._conexion.cursor() as cursor:
             cursor.execute(sql, parametros or None)
             filas = cursor.fetchall() if cursor.description else []
@@ -168,6 +176,27 @@ class EjecutorPsycopg:
 
     def cerrar(self) -> None:
         self._conexion.close()
+
+
+def _tipo_data_api(valor: Any) -> str | None:
+    """Tipo con el que la Data API envía cada valor (ver `_a_parametro_data_api`).
+
+    Así los tests fallan igual que Aurora si falta un CAST: p. ej. un texto ISO en una
+    columna timestamptz llega como varchar y PostgreSQL lo rechaza.
+    """
+    if valor is None:
+        return None
+    if isinstance(valor, bool):
+        return "boolean"
+    if isinstance(valor, int):
+        return "bigint"
+    if isinstance(valor, float):
+        return "numeric"
+    if isinstance(valor, datetime):
+        return "timestamp"
+    if isinstance(valor, date):
+        return "date"
+    return "varchar"
 
 
 def _serializable(valor: Any) -> Any:

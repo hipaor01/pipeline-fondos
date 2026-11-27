@@ -5,9 +5,10 @@ versión del KID, o no se carga nada. Repetir la carga del mismo JSON no crea fi
 """
 
 from dataclasses import dataclass
+from typing import Any
 
 from procesamiento.datos.ejecutor import EjecutorSQL
-from procesamiento.esquema import Estado, ResultadoExtraccion
+from procesamiento.esquema import Estado, Origen, ResultadoExtraccion
 
 SQL_DOCUMENTO_CARGADO = """
 SELECT d.id
@@ -40,12 +41,26 @@ INSERT INTO documento (
     url_origen, fecha_descarga, correlation_id, json_s3_key
 ) VALUES (
     :sha256, :gestora, :tipo_documento, :s3_bucket, :s3_key, :s3_version_id,
-    :url_origen, :fecha_descarga, :correlation_id, :json_s3_key
+    :url_origen, CAST(:fecha_descarga AS timestamptz), :correlation_id, :json_s3_key
 )
 ON CONFLICT ON CONSTRAINT documento_sha256_uk DO NOTHING
 """
 
 SQL_ID_DOCUMENTO = "SELECT id FROM documento WHERE sha256 = :sha256"
+
+# La fecha llega como texto ISO 8601: sin CAST, la Data API la envía como varchar.
+SQL_OBSERVACION = """
+INSERT INTO documento_observacion (
+    documento_id, gestora_codigo, tipo_documento, s3_bucket, s3_key, s3_version_id,
+    url_origen, fecha_descarga, correlation_id, json_s3_key
+)
+SELECT d.id, :gestora, :tipo_documento, :s3_bucket, :s3_key, :s3_version_id,
+       :url_origen, CAST(:fecha_descarga AS timestamptz), :correlation_id, :json_s3_key
+FROM documento d
+WHERE d.sha256 = :sha256
+ON CONFLICT ON CONSTRAINT documento_observacion_objeto_uk DO NOTHING
+RETURNING id
+"""
 
 SQL_KID_VERSION = """
 INSERT INTO kid_version (
@@ -79,6 +94,12 @@ class RepositorioKids:
     def documento_cargado(self, sha256: str) -> bool:
         return bool(self._sql.ejecutar(SQL_DOCUMENTO_CARGADO, {"sha256": sha256}))
 
+    def registrar_observacion(self, origen: Origen, json_s3_key: str) -> bool:
+        """Guarda la procedencia de un PDF ya cargado. True si es una observación nueva."""
+        return bool(
+            self._sql.ejecutar(SQL_OBSERVACION, _parametros_origen(origen, json_s3_key))
+        )
+
     def guardar(
         self, resultado: ResultadoExtraccion, json_s3_key: str
     ) -> ResultadoCarga:
@@ -97,21 +118,9 @@ class RepositorioKids:
                 {"gestora": origen.gestora, "nombre_producto": datos.nombre_producto},
             )[0]["id"]
             self._sql.ejecutar(SQL_CLASE, {"isin": datos.isin, "fondo_id": fondo_id})
-            self._sql.ejecutar(
-                SQL_DOCUMENTO,
-                {
-                    "sha256": origen.pdf_sha256,
-                    "gestora": origen.gestora,
-                    "tipo_documento": origen.tipo_documento,
-                    "s3_bucket": origen.pdf_bucket,
-                    "s3_key": origen.pdf_key,
-                    "s3_version_id": origen.pdf_version_id,
-                    "url_origen": origen.url_origen,
-                    "fecha_descarga": origen.fecha_descarga,
-                    "correlation_id": origen.correlation_id,
-                    "json_s3_key": json_s3_key,
-                },
-            )
+            parametros_origen = _parametros_origen(origen, json_s3_key)
+            self._sql.ejecutar(SQL_DOCUMENTO, parametros_origen)
+            self._sql.ejecutar(SQL_OBSERVACION, parametros_origen)
             documento_id = self._sql.ejecutar(
                 SQL_ID_DOCUMENTO, {"sha256": origen.pdf_sha256}
             )[0]["id"]
@@ -139,3 +148,18 @@ class RepositorioKids:
         return ResultadoCarga(
             documento_id=documento_id, kid_version_id=filas[0]["id"] if filas else None
         )
+
+
+def _parametros_origen(origen: Origen, json_s3_key: str) -> dict[str, Any]:
+    return {
+        "sha256": origen.pdf_sha256,
+        "gestora": origen.gestora,
+        "tipo_documento": origen.tipo_documento,
+        "s3_bucket": origen.pdf_bucket,
+        "s3_key": origen.pdf_key,
+        "s3_version_id": origen.pdf_version_id,
+        "url_origen": origen.url_origen,
+        "fecha_descarga": origen.fecha_descarga,
+        "correlation_id": origen.correlation_id,
+        "json_s3_key": json_s3_key,
+    }

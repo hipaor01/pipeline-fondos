@@ -9,6 +9,7 @@ on:
       - "infra/bootstrap/processing_cd_permissions.tf"
       - "infra/environments/dev/processing/**"
       - "infra/environments/dev/processing-registry/**"
+      - ".github/actions/publish-ecr-image/**"
       - "infra/modules/container_registry/**"
       - "infra/modules/database/**"
       - "infra/modules/processing/**"
@@ -23,6 +24,7 @@ on:
       - "database/**"
       - "infra/environments/dev/processing/**"
       - "infra/environments/dev/processing-registry/**"
+      - ".github/actions/publish-ecr-image/**"
       - "infra/modules/container_registry/**"
       - "infra/modules/database/**"
       - "infra/modules/processing/**"
@@ -137,13 +139,18 @@ jobs:
           docker run --rm --entrypoint /var/lang/bin/python3 pipeline-fondos-processing:check \
             -c "import procesamiento.markdown, procesamiento.extraccion; print('handlers OK')"
 
-      - name: Require deployment role variable
+      - name: Require deployment variables
         if: github.ref == 'refs/heads/main'
         env:
           AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          DOCUMENTS_BUCKET: ${{ vars.CAPTURE_DOCUMENTS_BUCKET }}
         run: |
           if [ -z "${AWS_DEPLOY_ROLE_ARN}" ]; then
             echo "Repository variable AWS_DEPLOY_ROLE_ARN is required" >&2
+            exit 1
+          fi
+          if [ -z "${DOCUMENTS_BUCKET}" ]; then
+            echo "Repository variable CAPTURE_DOCUMENTS_BUCKET is required (same bucket as capture)" >&2
             exit 1
           fi
 
@@ -171,6 +178,23 @@ jobs:
           allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
           mask-aws-account-id: true
 
+      - name: Verify document bucket and existing notifications
+        if: github.ref == 'refs/heads/main'
+        env:
+          DOCUMENTS_BUCKET: ${{ vars.CAPTURE_DOCUMENTS_BUCKET }}
+        run: |
+          versioning=$(aws s3api get-bucket-versioning --bucket "${DOCUMENTS_BUCKET}" \
+            --expected-bucket-owner "${AWS_ACCOUNT_ID}" --query Status --output text)
+          if [ "${versioning}" != "Enabled" ]; then
+            echo "Document bucket versioning must be Enabled (contract C1)" >&2
+            exit 1
+          fi
+          # Terraform reemplaza la configuración completa: se deja constancia de la anterior.
+          echo "## Notificaciones del bucket antes de aplicar" >> "${GITHUB_STEP_SUMMARY}"
+          aws s3api get-bucket-notification-configuration --bucket "${DOCUMENTS_BUCKET}" \
+            --expected-bucket-owner "${AWS_ACCOUNT_ID}" --output json \
+            | tee -a "${GITHUB_STEP_SUMMARY}"
+
       - name: Provision processing registry
         if: github.ref == 'refs/heads/main'
         id: registry
@@ -188,40 +212,31 @@ jobs:
             echo "registry=${repository_url%%/*}"
           } >> "${GITHUB_OUTPUT}"
 
-      - name: Build and publish ARM64 image (once per commit)
+      - name: Publish ARM64 image (once per commit)
+        if: github.ref == 'refs/heads/main'
+        id: publish
+        uses: ./.github/actions/publish-ecr-image
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          dockerfile: procesamiento/Dockerfile
+          image-tag: ${{ github.sha }}
+          repository-name: ${{ steps.registry.outputs.repository_name }}
+          repository-url: ${{ steps.registry.outputs.repository_url }}
+
+      - name: Resolve image URI
         if: github.ref == 'refs/heads/main'
         id: image
         env:
-          ECR_REPOSITORY_NAME: ${{ steps.registry.outputs.repository_name }}
           ECR_REPOSITORY_URL: ${{ steps.registry.outputs.repository_url }}
-          ECR_REGISTRY: ${{ steps.registry.outputs.registry }}
-        run: |
-          if ! aws ecr describe-images --repository-name "${ECR_REPOSITORY_NAME}" \
-              --image-ids "imageTag=${GITHUB_SHA}" >/dev/null 2>&1; then
-            aws ecr get-login-password --region "${AWS_REGION}" \
-              | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
-            docker buildx build \
-              --platform linux/arm64 \
-              --push \
-              --provenance=false \
-              --file procesamiento/Dockerfile \
-              --tag "${ECR_REPOSITORY_URL}:${GITHUB_SHA}" \
-              .
-          fi
-
-          digest=$(aws ecr describe-images --repository-name "${ECR_REPOSITORY_NAME}" \
-            --image-ids "imageTag=${GITHUB_SHA}" --query "imageDetails[0].imageDigest" --output text)
-          if [ -z "${digest}" ] || [ "${digest}" = "None" ]; then
-            echo "ECR did not return the image digest" >&2
-            exit 1
-          fi
-          echo "uri=${ECR_REPOSITORY_URL}@${digest}" >> "${GITHUB_OUTPUT}"
+          IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
+        run: echo "uri=${ECR_REPOSITORY_URL}@${IMAGE_DIGEST}" >> "${GITHUB_OUTPUT}"
 
       - name: Deploy database and Lambdas
         if: github.ref == 'refs/heads/main'
         id: processing
         env:
           TF_VAR_image_uri: ${{ steps.image.outputs.uri }}
+          TF_VAR_documents_bucket_name: ${{ vars.CAPTURE_DOCUMENTS_BUCKET }}
         run: |
           terraform -chdir=infra/environments/dev/processing init -input=false \
             -backend-config="bucket=${TF_STATE_BUCKET}"
