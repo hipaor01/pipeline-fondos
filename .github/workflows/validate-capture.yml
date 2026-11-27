@@ -1,12 +1,15 @@
-name: Validate fund capture
+name: Deploy fund capture to dev
 
 on:
   pull_request:
     paths:
+      - ".dockerignore"
+      - ".github/actions/publish-ecr-image/**"
       - ".github/workflows/validate-capture.yml"
       - "Dockerfile.scraper*"
       - "webscrapper/**"
       - "tests/webscrapper/**"
+      - "infra/bootstrap/**"
       - "infra/environments/dev/capture*/**"
       - "infra/environments/dev/storage/**"
       - "infra/modules/container_registry/**"
@@ -15,47 +18,287 @@ on:
   push:
     branches: [main]
     paths:
+      - ".dockerignore"
+      - ".github/actions/publish-ecr-image/**"
       - ".github/workflows/validate-capture.yml"
       - "Dockerfile.scraper*"
       - "webscrapper/**"
       - "tests/webscrapper/**"
+      - "infra/bootstrap/**"
       - "infra/environments/dev/capture*/**"
       - "infra/environments/dev/storage/**"
       - "infra/modules/container_registry/**"
       - "pyproject.toml"
       - "uv.lock"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+env:
+  AWS_ACCOUNT_ID: "065451207233"
+  AWS_REGION: eu-west-3
+  TF_STATE_BUCKET: pipeline-fondos-terraform-state-065451207233
+  TERRAFORM_VERSION: "1.15.8"
+  UV_VERSION: "0.13.7"
+
 jobs:
-  validate:
-    runs-on: ubuntu-24.04-arm
+  quality:
+    name: Test and validate
+    runs-on: ubuntu-latest
     timeout-minutes: 20
+
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.7"
-      - run: uv python install 3.14
-      - run: uv sync --locked --group dev --group scraping
-      - run: uv run --locked --group dev --group scraping ruff check webscrapper tests/webscrapper
-      - run: uv run --locked --group dev --group scraping pytest -q tests/webscrapper
-      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install 3.14
+
+      - name: Install scraping and development dependencies
+        run: uv sync --locked --group dev --group scraping
+
+      - name: Lint capture code
+        run: uv run --locked --group dev --group scraping ruff check webscrapper tests/webscrapper
+
+      - name: Run capture tests
+        run: uv run --locked --group dev --group scraping pytest -q tests/webscrapper
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
         with:
-          terraform_version: "1.15.8"
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
-      - run: terraform fmt -check -recursive infra
-      - run: terraform -chdir=infra/environments/dev/storage init -backend=false -input=false
-      - run: terraform -chdir=infra/environments/dev/storage validate
-      - run: terraform -chdir=infra/environments/dev/storage test
-      - run: terraform -chdir=infra/modules/container_registry init -backend=false -input=false
-      - run: terraform -chdir=infra/modules/container_registry test
-      - run: terraform -chdir=infra/environments/dev/capture-registry init -backend=false -input=false
-      - run: terraform -chdir=infra/environments/dev/capture-registry validate
-      - run: terraform -chdir=infra/environments/dev/capture init -backend=false -input=false
-      - run: terraform -chdir=infra/environments/dev/capture validate
-      - run: terraform -chdir=infra/environments/dev/capture test
-      - run: docker buildx build --platform linux/arm64 --provenance=false --load -f Dockerfile.scraper -t pipeline-fondos-scraper:test .
+
+      - name: Check Terraform formatting
+        run: terraform fmt -check -recursive infra
+
+      - name: Validate document storage infrastructure
+        run: |
+          terraform -chdir=infra/environments/dev/storage init -backend=false -input=false
+          terraform -chdir=infra/environments/dev/storage validate
+          terraform -chdir=infra/environments/dev/storage test
+
+      - name: Test container registry module
+        run: |
+          terraform -chdir=infra/modules/container_registry init -backend=false -input=false
+          terraform -chdir=infra/modules/container_registry test
+
+      - name: Validate capture registry infrastructure
+        run: |
+          terraform -chdir=infra/environments/dev/capture-registry init -backend=false -input=false
+          terraform -chdir=infra/environments/dev/capture-registry validate
+
+      - name: Validate capture infrastructure
+        run: |
+          terraform -chdir=infra/environments/dev/capture init -backend=false -input=false
+          terraform -chdir=infra/environments/dev/capture validate
+          terraform -chdir=infra/environments/dev/capture test
+
+  deploy:
+    name: Build and deploy ARM64 capture
+    needs: quality
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    concurrency:
+      group: deploy-capture-dev
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build ARM64 image without publishing
+        if: github.ref != 'refs/heads/main'
+        run: |
+          docker buildx build \
+            --platform linux/arm64 \
+            --load \
+            --provenance=false \
+            --file Dockerfile.scraper \
+            --tag pipeline-fondos-scraper:check \
+            .
+
+      - name: Require deployment variables
+        if: github.ref == 'refs/heads/main'
+        env:
+          AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          CAPTURE_DOCUMENTS_BUCKET: ${{ vars.CAPTURE_DOCUMENTS_BUCKET }}
+        run: |
+          if [ -z "${AWS_DEPLOY_ROLE_ARN}" ]; then
+            echo "Repository variable AWS_DEPLOY_ROLE_ARN is required" >&2
+            exit 1
+          fi
+          if [ -z "${CAPTURE_DOCUMENTS_BUCKET}" ]; then
+            echo "Repository variable CAPTURE_DOCUMENTS_BUCKET is required" >&2
+            exit 1
+          fi
+
+      - name: Set up Terraform
+        if: github.ref == 'refs/heads/main'
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials through OIDC
+        if: github.ref == 'refs/heads/main'
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: capture-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
+          mask-aws-account-id: true
+
+      - name: Verify document bucket
+        if: github.ref == 'refs/heads/main'
+        env:
+          DOCUMENTS_BUCKET: ${{ vars.CAPTURE_DOCUMENTS_BUCKET }}
+        run: |
+          aws s3api head-bucket \
+            --bucket "${DOCUMENTS_BUCKET}" \
+            --expected-bucket-owner "${AWS_ACCOUNT_ID}"
+
+          bucket_region=$(aws s3api get-bucket-location \
+            --bucket "${DOCUMENTS_BUCKET}" \
+            --expected-bucket-owner "${AWS_ACCOUNT_ID}" \
+            --query LocationConstraint \
+            --output text)
+          if [ "${bucket_region}" != "${AWS_REGION}" ]; then
+            echo "Document bucket must be in ${AWS_REGION}; found ${bucket_region}" >&2
+            exit 1
+          fi
+
+          versioning=$(aws s3api get-bucket-versioning \
+            --bucket "${DOCUMENTS_BUCKET}" \
+            --expected-bucket-owner "${AWS_ACCOUNT_ID}" \
+            --query Status \
+            --output text)
+          if [ "${versioning}" != "Enabled" ]; then
+            echo "Document bucket versioning must be Enabled" >&2
+            exit 1
+          fi
+
+          aws s3api get-bucket-encryption \
+            --bucket "${DOCUMENTS_BUCKET}" \
+            --expected-bucket-owner "${AWS_ACCOUNT_ID}" \
+            --output json \
+            | jq -e '.ServerSideEncryptionConfiguration.Rules | length > 0' >/dev/null
+
+          aws s3api get-public-access-block \
+            --bucket "${DOCUMENTS_BUCKET}" \
+            --expected-bucket-owner "${AWS_ACCOUNT_ID}" \
+            --output json \
+            | jq -e '.PublicAccessBlockConfiguration |
+                .BlockPublicAcls and .IgnorePublicAcls and
+                .BlockPublicPolicy and .RestrictPublicBuckets' >/dev/null
+
+      - name: Provision capture registry
+        if: github.ref == 'refs/heads/main'
+        id: registry
+        run: |
+          terraform -chdir=infra/environments/dev/capture-registry init \
+            -input=false \
+            -backend-config="bucket=${TF_STATE_BUCKET}"
+          terraform -chdir=infra/environments/dev/capture-registry plan \
+            -input=false \
+            -out=tfplan
+          terraform -chdir=infra/environments/dev/capture-registry apply \
+            -input=false \
+            tfplan
+
+          repository_name=$(terraform -chdir=infra/environments/dev/capture-registry output -raw repository_name)
+          repository_url=$(terraform -chdir=infra/environments/dev/capture-registry output -raw repository_url)
+
+          {
+            echo "repository_name=${repository_name}"
+            echo "repository_url=${repository_url}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Publish immutable ARM64 image
+        if: github.ref == 'refs/heads/main'
+        id: published
+        uses: ./.github/actions/publish-ecr-image
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          dockerfile: Dockerfile.scraper
+          image-tag: ${{ github.sha }}
+          platform: linux/arm64
+          repository-name: ${{ steps.registry.outputs.repository_name }}
+          repository-url: ${{ steps.registry.outputs.repository_url }}
+
+      - name: Deploy capture infrastructure
+        if: github.ref == 'refs/heads/main'
+        id: capture
+        env:
+          DOCUMENTS_BUCKET: ${{ vars.CAPTURE_DOCUMENTS_BUCKET }}
+          ECR_REPOSITORY_URL: ${{ steps.registry.outputs.repository_url }}
+          IMAGE_DIGEST: ${{ steps.published.outputs.digest }}
+        run: |
+          image_uri="${ECR_REPOSITORY_URL}@${IMAGE_DIGEST}"
+          permissions_boundary_arn="arn:aws:iam::${AWS_ACCOUNT_ID}:policy/pipeline-fondos-dev-capture-boundary"
+
+          terraform -chdir=infra/environments/dev/capture init \
+            -input=false \
+            -backend-config="bucket=${TF_STATE_BUCKET}"
+          terraform -chdir=infra/environments/dev/capture plan \
+            -input=false \
+            -var="documents_bucket=${DOCUMENTS_BUCKET}" \
+            -var="image_uri=${image_uri}" \
+            -var="permissions_boundary_arn=${permissions_boundary_arn}" \
+            -out=tfplan
+          terraform -chdir=infra/environments/dev/capture apply \
+            -input=false \
+            tfplan
+
+          state_machine_arn=$(terraform -chdir=infra/environments/dev/capture output -raw state_machine_arn)
+          schedule_name=$(terraform -chdir=infra/environments/dev/capture output -raw schedule_name)
+          schedule_state=$(aws scheduler get-schedule \
+            --name "${schedule_name}" \
+            --query State \
+            --output text)
+
+          if [ "${schedule_state}" != "DISABLED" ]; then
+            echo "Capture schedule must remain DISABLED after deployment" >&2
+            exit 1
+          fi
+
+          {
+            echo "image_uri=${image_uri}"
+            echo "schedule_name=${schedule_name}"
+            echo "state_machine_arn=${state_machine_arn}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Deployment summary
+        if: github.ref == 'refs/heads/main'
+        env:
+          DOCUMENTS_BUCKET: ${{ vars.CAPTURE_DOCUMENTS_BUCKET }}
+          IMAGE_ALREADY_EXISTED: ${{ steps.published.outputs.already_existed }}
+          IMAGE_URI: ${{ steps.capture.outputs.image_uri }}
+          SCHEDULE_NAME: ${{ steps.capture.outputs.schedule_name }}
+          STATE_MACHINE_ARN: ${{ steps.capture.outputs.state_machine_arn }}
+        run: |
+          {
+            echo "## Fund capture deployed"
+            echo
+            echo "- Image: ${IMAGE_URI}"
+            echo "- Already existed: ${IMAGE_ALREADY_EXISTED}"
+            echo "- Platform: linux/arm64"
+            echo "- Document bucket: ${DOCUMENTS_BUCKET}"
+            echo "- State machine: ${STATE_MACHINE_ARN}"
+            echo "- Schedule: ${SCHEDULE_NAME} (disabled)"
+          } >> "${GITHUB_STEP_SUMMARY}"

@@ -20,7 +20,7 @@ Se propuso una imagen común porque las tres fuentes se han capturado mediante H
 
 - Python 3.14, `uv`, Docker con Buildx, AWS CLI v2, Terraform >= 1.10, `jq` y permisos para ECR, Lambda, IAM, CloudWatch Logs, CloudWatch, SQS, Step Functions y Scheduler en la cuenta de prueba.
 - Un bucket de documentos existente, privado y versionado en `eu-west-3`, como el preparado siguiendo [GUIA_AWS_CAPTURA.md](GUIA_AWS_CAPTURA.md). Confirmar la cuenta y el bucket antes de seguir; los comandos crean recursos y las ejecuciones generan versiones nuevas y costes.
-- Tres raíces Terraform independientes: [`storage`](../infra/environments/dev/storage/README.md) crea un bucket o referencia uno existente sin gestionarlo; `capture-registry` crea ECR; `capture` recibe el digest de la imagen y crea las Lambdas y la orquestación. Por defecto usan **estado local** en sus respectivos directorios. Conservar y respaldar los estados; no ejecutar desde otra máquina o CI como si los recursos no existieran. Antes de compartir o integrar con P3, configurar y migrar cada raíz a un backend remoto independiente de forma acordada. Estos comandos no modifican el bootstrap ni la cuenta del compañero.
+- Tres raíces Terraform independientes: [`storage`](../infra/environments/dev/storage/README.md) crea un bucket o referencia uno existente sin gestionarlo; `capture-registry` crea ECR; `capture` recibe el digest de la imagen y crea las Lambdas y la orquestación. Las tres tienen claves independientes en el backend S3; `storage` continúa separado y no se aplica desde el workflow. Si existen recursos administrados por un estado local anterior, migrar ese estado de forma explícita antes de inicializar el backend remoto para evitar intentar recrearlos.
 
 ## 1. Cuenta, bucket y validación local
 
@@ -30,8 +30,11 @@ export PF_REGION=eu-west-3
 export PF_BUCKET='NOMBRE-DE-TU-BUCKET-DE-PRUEBA'
 aws s3api get-bucket-versioning --bucket "$PF_BUCKET" --region "$PF_REGION"
 uv run --locked --group dev --group frontend --group scraping pytest -q
-terraform -chdir=infra/environments/dev/capture-registry init
-terraform -chdir=infra/environments/dev/capture init
+export PF_STATE_BUCKET='pipeline-fondos-terraform-state-065451207233'
+terraform -chdir=infra/environments/dev/capture-registry init \
+  -backend-config="bucket=$PF_STATE_BUCKET"
+terraform -chdir=infra/environments/dev/capture init \
+  -backend-config="bucket=$PF_STATE_BUCKET"
 terraform -chdir=infra/environments/dev/capture-registry validate
 terraform -chdir=infra/environments/dev/capture validate
 terraform -chdir=infra/environments/dev/capture test
@@ -160,7 +163,7 @@ Se probó además, de forma aislada, un filtro nativo S3 → SQS con prefijo tem
 
 En la revisión posterior del mismo día se reconstruyó la imagen con la corrección para detectar una captura de Bestinver sin ningún KID. Un plan Terraform actualizó únicamente las tres Lambdas; una invocación real de Bestinver registró 37 subidos, 11 ausentes y ningún fallo, con las 37 versiones reconciliadas por hash y `correlation_id`. El caso sin KID se probó con respuestas controladas localmente.
 
-Las ejecuciones reales crean versiones adicionales en S3 y consumen servicios de AWS. El estado local de Terraform no se debe borrar ni subir a Git; su migración a estado remoto compartido y la integración de despliegue/OIDC siguen pendientes. La validación de CI está configurada en el repositorio, pero aún no se ha ejecutado en GitHub para estos cambios.
+Las ejecuciones reales crean versiones adicionales en S3 y consumen servicios de AWS. Las raíces `capture-registry` y `capture` usan estados remotos separados y el workflow despliega mediante OIDC; cualquier estado local que hubiera administrado los mismos recursos debe migrarse antes del primer despliegue. La ejecución real del nuevo workflow en GitHub sigue pendiente para estos cambios.
 
 ## Repetir la prueba aislada de eventos S3
 

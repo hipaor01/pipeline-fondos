@@ -50,6 +50,16 @@ variable "artifact_bucket_name" {
   }
 }
 
+variable "capture_documents_bucket" {
+  description = "Bucket de documentos existente que podrá usar la captura."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$", var.capture_documents_bucket))
+    error_message = "capture_documents_bucket debe ser un nombre S3 válido de entre 3 y 63 caracteres, sin puntos."
+  }
+}
+
 variable "deployment_environment" {
   description = "Entorno AWS que podrá desplegar el rol de GitHub Actions."
   type        = string

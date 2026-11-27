@@ -144,12 +144,20 @@ data "aws_iam_policy_document" "github_actions_frontend" {
       "ecs:CreateExpressGatewayService",
       "ecs:DeleteExpressGatewayService",
       "ecs:DescribeExpressGatewayService",
+      "ecs:DescribeServices",
       "ecs:ListTagsForResource",
       "ecs:TagResource",
       "ecs:UntagResource",
       "ecs:UpdateExpressGatewayService",
     ]
     resources = [local.frontend_service_arn]
+  }
+
+  statement {
+    sid       = "ProvisionDefaultFrontendCluster"
+    effect    = "Allow"
+    actions   = ["ecs:CreateCluster"]
+    resources = [local.frontend_cluster_arn]
   }
 
   statement {

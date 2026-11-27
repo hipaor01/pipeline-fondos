@@ -6,7 +6,7 @@ CD:
 - el bucket S3 utilizado como backend remoto;
 - la consulta del proveedor OIDC de GitHub Actions ya existente en la cuenta;
 - el rol y la política de despliegue del entorno `dev`;
-- la permissions boundary del rol de ejecución de Lambda.
+- las permissions boundaries de la API y de captura.
 
 El bucket de estado tiene:
 
@@ -51,13 +51,13 @@ La relación de confianza del rol exige:
 - el subject OIDC inmutable del repositorio `hipaor01/pipeline-fondos`;
 - la rama exacta `main`.
 
-El rol puede administrar el bucket de artefactos reservado, el estado de los
-roots `dev`, el repositorio ECR y el servicio ECS Express del frontend, la
-Lambda, su rol de ejecución, sus logs y las HTTP APIs de la región. Los permisos
-de ECR están limitados al repositorio `pipeline-fondos-dev-frontend`, incluida
-la publicación de imágenes. Los roles que puede crear para ECS tienen nombres
-y políticas administradas explícitamente delimitados. El rol no puede modificar
-su propia política. API Gateway no permite delimitar la creación inicial por
+El rol puede administrar el bucket de artefactos reservado, los estados de los
+roots `dev`, la API y el frontend. También recibe políticas separadas para los
+los estados de storage y captura, su único repositorio ECR y los recursos Lambda, Step Functions,
+Scheduler, SQS y CloudWatch con nombres conocidos. Sobre el bucket documental
+solo puede comprobar propiedad y configuración; son los roles de ejecución los
+que pueden escribir bajo `raw/` y `manifests/`. El rol no puede modificar su
+propia política. API Gateway no permite delimitar la creación inicial por
 nombre, por lo que sus acciones se limitan al servicio API Gateway de
 `eu-west-3`, pero no a un ID que todavía no existe.
 
@@ -67,12 +67,32 @@ política inline de ese rol, sus permisos efectivos quedan limitados actualmente
 a escribir en el grupo de logs de la Lambda. Cuando la API necesite Aurora o
 Secrets Manager, la frontera se ampliará aquí mediante un `apply` manual.
 
-El bootstrap se aplica manualmente; la pipeline no debe aplicar el root que
-gestiona su propia relación de confianza:
+Los cinco roles de captura también deben usar la boundary gestionada por el
+bootstrap. Esta limita el máximo efectivo a los logs y prefijos S3 de captura,
+la invocación de sus tres Lambdas, el inicio de su máquina de estados y el envío
+a su DLQ. Para habilitar esos recursos hay que aplicar manualmente:
 
 ```bash
-terraform plan
-terraform apply
+terraform plan \
+  -var='capture_documents_bucket=NOMBRE-DEL-BUCKET-COMPROBADO' \
+  -out=capture-bootstrap.tfplan
+terraform apply capture-bootstrap.tfplan
+```
+
+El mismo nombre debe guardarse en la variable de repositorio
+`CAPTURE_DOCUMENTS_BUCKET`. Usar otro hará que la inspección o el despliegue
+fallen por diseño.
+
+El bootstrap se aplica manualmente; la pipeline no debe aplicar el root que
+gestiona su propia relación de confianza. `capture_documents_bucket` es
+obligatorio; conviene conservarlo en un `terraform.tfvars` local no versionado
+para que cada plan use explícitamente el mismo bucket:
+
+```bash
+terraform plan \
+  -var='capture_documents_bucket=NOMBRE-DEL-BUCKET-COMPROBADO' \
+  -out=bootstrap.tfplan
+terraform apply bootstrap.tfplan
 terraform output -raw github_actions_cd_role_arn
 ```
 

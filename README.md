@@ -346,6 +346,32 @@ La pipeline crea el bucket versionado de artefactos, construye un ZIP Linux
 comprueba el endpoint `/health`. No requiere un GitHub Environment llamado
 `dev`; la confianza OIDC está restringida directamente a la rama `main`.
 
+## Despliegue continuo de la captura
+
+El workflow [`.github/workflows/validate-capture.yml`](.github/workflows/validate-capture.yml)
+valida el scraper y su infraestructura en cada pull request. En `main` comprueba
+el bucket documental configurado, crea el repositorio ECR, publica una imagen
+ARM64 inmutable identificada por el SHA del commit y despliega las tres Lambdas,
+Step Functions y Scheduler usando el digest. El horario queda desactivado.
+
+Antes del primer despliegue hay que elegir y comprobar un bucket privado,
+versionado y cifrado en `eu-west-3`. Después se amplía manualmente el bootstrap
+y se guarda el mismo nombre como variable del repositorio:
+
+```bash
+export CAPTURE_DOCUMENTS_BUCKET='NOMBRE-DEL-BUCKET-COMPROBADO'
+terraform -chdir=infra/bootstrap plan \
+  -var="capture_documents_bucket=${CAPTURE_DOCUMENTS_BUCKET}" \
+  -out=capture-bootstrap.tfplan
+terraform -chdir=infra/bootstrap apply capture-bootstrap.tfplan
+gh variable set CAPTURE_DOCUMENTS_BUCKET \
+  --body "${CAPTURE_DOCUMENTS_BUCKET}"
+```
+
+El bootstrap debe aplicarse antes de fusionar el workflow por primera vez: el
+rol OIDC no puede concederse a sí mismo los nuevos permisos. El bucket de
+documentos se referencia, pero este workflow no lo crea ni lo modifica.
+
 ## Próximas etapas
 
 - [x] Extraer información de los KID descargados (PDF → Markdown → datos estructurados).
