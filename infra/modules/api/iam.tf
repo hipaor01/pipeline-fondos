@@ -45,5 +45,24 @@ resource "aws_iam_role_policy" "lambda_logging" {
   policy = data.aws_iam_policy_document.lambda_logging.json
 }
 
-# Los permisos para Aurora y Secrets Manager se añadirán cuando exista el
-# repositorio correspondiente, limitándolos a sus ARN concretos.
+data "aws_iam_policy_document" "lambda_database" {
+  statement {
+    sid       = "QueryAuroraDataApi"
+    effect    = "Allow"
+    actions   = ["rds-data:ExecuteStatement"]
+    resources = [var.database_cluster_arn]
+  }
+
+  statement {
+    sid       = "ReadAuroraCredentials"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [var.database_secret_arn]
+  }
+}
+
+resource "aws_iam_role_policy" "lambda_database" {
+  name   = "${local.lambda_function_name}-database"
+  role   = aws_iam_role.lambda_execution.id
+  policy = data.aws_iam_policy_document.lambda_database.json
+}

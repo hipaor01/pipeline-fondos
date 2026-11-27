@@ -15,6 +15,7 @@ aws = [
 ]
 api = [
     { include-group = "modelos" },
+    "boto3",
     "fastapi>=0.136,<1",
     "mangum>=0.21,<1",
 ]

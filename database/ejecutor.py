@@ -1,8 +1,8 @@
-"""Ejecutores SQL con la misma interfaz para Aurora (RDS Data API) y PostgreSQL local.
+"""Ejecutores SQL compartidos para Aurora Data API y PostgreSQL local.
 
-El SQL se escribe con parámetros `:nombre` (formato de la Data API). En local y en
-los tests se usa psycopg contra un PostgreSQL real, de modo que las sentencias que
-se prueban son exactamente las que se ejecutan en Aurora.
+El SQL se escribe con parametros ``:nombre`` (formato de la Data API). En local
+y en los tests se usa psycopg contra PostgreSQL, de modo que se ejecutan las
+mismas sentencias y se emulan los tipos enviados por la Data API.
 """
 
 import json
@@ -17,6 +17,8 @@ Parametros = dict[str, Any]
 
 
 class EjecutorSQL(Protocol):
+    """Contrato comun para ejecutar SQL desde cualquier componente."""
+
     def ejecutar(
         self, sql: str, parametros: Parametros | None = None
     ) -> list[dict[str, Any]]: ...
@@ -25,22 +27,19 @@ class EjecutorSQL(Protocol):
 
 
 class ErrorBaseDatos(RuntimeError):
-    """Error técnico de base de datos: se propaga para que SQS reintente."""
-
-
-# --------------------------------------------------------------------------- Data API
+    """Error tecnico producido durante una operacion de base de datos."""
 
 
 class EjecutorDataAPI:
-    """Aurora PostgreSQL vía RDS Data API (HTTPS + Secrets Manager, sin VPC en la Lambda)."""
+    """Ejecuta SQL en Aurora PostgreSQL mediante RDS Data API."""
 
-    ESPERA_REANUDACION_S = 40  # Aurora con 0 ACU tarda ~15 s en reanudarse
+    ESPERA_REANUDACION_S = 40
 
     def __init__(
         self, cluster_arn: str, secret_arn: str, base_datos: str, cliente: Any = None
     ) -> None:
         if cliente is None:
-            import boto3
+            import boto3  # type: ignore[import-untyped]
 
             cliente = boto3.client("rds-data")
         self._cliente = cliente
@@ -58,7 +57,8 @@ class EjecutorDataAPI:
             **self._base,
             "sql": sql,
             "parameters": [
-                _a_parametro_data_api(n, v) for n, v in (parametros or {}).items()
+                _a_parametro_data_api(nombre, valor)
+                for nombre, valor in (parametros or {}).items()
             ],
             "formatRecordsAs": "JSON",
         }
@@ -99,9 +99,9 @@ class EjecutorDataAPI:
         while True:
             try:
                 return llamada()
-            except Exception as error:  # botocore genera la clase dinámicamente
-                nombre = getattr(error, "response", {}).get("Error", {}).get("Code", "")
-                if nombre != "DatabaseResumingException" or time.monotonic() > limite:
+            except Exception as error:  # botocore genera la clase dinamicamente
+                codigo = getattr(error, "response", {}).get("Error", {}).get("Code", "")
+                if codigo != "DatabaseResumingException" or time.monotonic() > limite:
                     raise
                 time.sleep(3)
 
@@ -136,38 +136,37 @@ def _a_parametro_data_api(nombre: str, valor: Any) -> dict[str, Any]:
     return {"name": nombre, "value": {"stringValue": str(valor)}}
 
 
-# --------------------------------------------------------------------------- psycopg
-
 _PARAMETRO = re.compile(r"(?<![:\w]):([A-Za-z_]\w*)")
 
 
 class EjecutorPsycopg:
-    """PostgreSQL directo, para desarrollo local y tests. Requiere `psycopg`."""
+    """Ejecuta el mismo SQL directamente en PostgreSQL local."""
 
     def __init__(self, dsn: str) -> None:
-        import psycopg
-        from psycopg.rows import dict_row
+        import psycopg  # type: ignore[import-not-found]
+        from psycopg.rows import dict_row  # type: ignore[import-not-found]
 
         self._conexion = psycopg.connect(dsn, autocommit=True, row_factory=dict_row)
-        self._en_transaccion = False
 
     def ejecutar(
         self, sql: str, parametros: Parametros | None = None
     ) -> list[dict[str, Any]]:
         if parametros:
-            tipos = {n: _tipo_data_api(v) for n, v in parametros.items()}
+            tipos = {nombre: _tipo_data_api(valor) for nombre, valor in parametros.items()}
 
-            def sustituir(m: re.Match[str]) -> str:
-                tipo = tipos.get(m.group(1))
-                return (
-                    f"CAST(%({m.group(1)})s AS {tipo})" if tipo else f"%({m.group(1)})s"
-                )
+            def sustituir(coincidencia: re.Match[str]) -> str:
+                nombre = coincidencia.group(1)
+                tipo = tipos.get(nombre)
+                return f"CAST(%({nombre})s AS {tipo})" if tipo else f"%({nombre})s"
 
             sql = _PARAMETRO.sub(sustituir, sql.replace("%", "%%"))
         with self._conexion.cursor() as cursor:
             cursor.execute(sql, parametros or None)
             filas = cursor.fetchall() if cursor.description else []
-        return [{k: _serializable(v) for k, v in fila.items()} for fila in filas]
+        return [
+            {clave: _serializable(valor) for clave, valor in fila.items()}
+            for fila in filas
+        ]
 
     @contextmanager
     def transaccion(self) -> Iterator[None]:
@@ -179,11 +178,8 @@ class EjecutorPsycopg:
 
 
 def _tipo_data_api(valor: Any) -> str | None:
-    """Tipo con el que la Data API envía cada valor (ver `_a_parametro_data_api`).
+    """Devuelve el tipo con el que Data API enviaria el valor."""
 
-    Así los tests fallan igual que Aurora si falta un CAST: p. ej. un texto ISO en una
-    columna timestamptz llega como varchar y PostgreSQL lo rechaza.
-    """
     if valor is None:
         return None
     if isinstance(valor, bool):
@@ -200,7 +196,8 @@ def _tipo_data_api(valor: Any) -> str | None:
 
 
 def _serializable(valor: Any) -> Any:
-    """Imita lo que devuelve la Data API con formatRecordsAs=JSON (fechas como texto)."""
+    """Imita los valores JSON devueltos por Data API."""
+
     from decimal import Decimal
 
     if isinstance(valor, Decimal):

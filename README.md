@@ -215,12 +215,13 @@ mínimos `GET /health`, `GET /gestoras`, `GET /fondos`, `GET /fondos/{isin}` y
 
 Los modelos Pydantic están en `api/models/`. La interfaz de solo lectura
 `RepositorioFondos`, situada en `api/repositories/base.py`, desacopla la API de
-la implementación de acceso a Aurora y permite utilizar repositorios simulados
-en las pruebas.
+la fuente de datos. `RepositorioFondosAurora`, en `api/repositories/aurora.py`,
+implementa esa interfaz sobre las vistas `api_fondo` y `api_kid_version` mediante
+el ejecutor SQL compartido de `database/ejecutor.py`.
 
 `RepositorioFondosEnMemoria.con_datos_semilla()` proporciona una implementación
 determinista para desarrollo local. Respeta los mismos filtros, ordenación y
-paginación que deberá implementar el repositorio de Aurora.
+paginación que el repositorio de Aurora.
 
 `ServicioFondos`, en `api/services/fondos.py`, convierte los resultados del
 repositorio en respuestas Pydantic y representa un ISIN inexistente mediante la
@@ -232,6 +233,20 @@ en memoria y puede ejecutarse localmente con:
 ```bash
 uv run --group dev uvicorn api.app:app --reload
 ```
+
+Para consultar Aurora mediante RDS Data API hay que seleccionar explícitamente
+el repositorio y proporcionar toda su configuración:
+
+```bash
+REPOSITORIO_FONDOS=aurora \
+DB_CLUSTER_ARN=arn:aws:rds:... \
+DB_SECRET_ARN=arn:aws:secretsmanager:... \
+DB_NAME=fondos \
+uv run --group dev uvicorn api.app:app
+```
+
+Si se selecciona Aurora y falta alguna variable, la aplicación falla durante el
+arranque para evitar servir accidentalmente los datos en memoria.
 
 El frontend Streamlit se ejecuta en otra terminal desde la raíz del repositorio:
 
@@ -339,11 +354,15 @@ Para exportar únicamente las dependencias de esta Lambda durante el build:
 uv export --only-group api --no-emit-project --locked --output-file build/requirements-api.txt
 ```
 
-## Despliegue continuo de la API
+## Despliegue continuo del backend
 
-El workflow [`.github/workflows/deploy-api-dev.yml`](.github/workflows/deploy-api-dev.yml)
-valida el proyecto en cada pull request y despliega `dev` cuando los cambios
-llegan a `main`. Se autentica en AWS mediante OIDC, sin claves estáticas.
+Los workflows reutilizables
+[`.github/workflows/deploy-processing-dev.yml`](.github/workflows/deploy-processing-dev.yml)
+y [`.github/workflows/deploy-api-dev.yml`](.github/workflows/deploy-api-dev.yml)
+validan sus componentes en cada pull request. Cuando los cambios llegan a
+`main`, [`.github/workflows/deploy-backend-dev.yml`](.github/workflows/deploy-backend-dev.yml)
+garantiza la secuencia procesamiento y migraciones → API y smoke test. Se
+autentican en AWS mediante OIDC, sin claves estáticas.
 
 Antes del primer despliegue hay que aplicar manualmente `infra/bootstrap` y
 guardar el ARN resultante como variable del repositorio:
@@ -354,9 +373,10 @@ gh variable set AWS_DEPLOY_ROLE_ARN \
   --body "$(terraform -chdir=infra/bootstrap output -raw github_actions_cd_role_arn)"
 ```
 
-La pipeline crea el bucket versionado de artefactos, construye un ZIP Linux
-`x86_64` únicamente con el grupo `api`, lo publica en S3, aplica Terraform y
-comprueba el endpoint `/health`. No requiere un GitHub Environment llamado
+La pipeline despliega primero Aurora y las Lambdas de procesamiento, aplica las
+migraciones y después crea el bucket versionado de artefactos, construye un ZIP
+Linux `x86_64` únicamente con el grupo `api`, lo publica en S3, aplica Terraform
+y comprueba `/health` y `/gestoras`. No requiere un GitHub Environment llamado
 `dev`; la confianza OIDC está restringida directamente a la rama `main`.
 
 ## Despliegue continuo de la captura

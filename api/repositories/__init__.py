@@ -1,5 +1,6 @@
 """Interfaces y tipos para acceder a los datos consultados por la API."""
 
+from api.repositories.aurora import RepositorioFondosAurora
 from api.repositories.base import (
     ConsultaPaginada,
     ErrorRepositorio,
@@ -16,6 +17,7 @@ __all__ = [
     "FiltrosFondos",
     "FiltrosKids",
     "RepositorioFondos",
+    "RepositorioFondosAurora",
     "RepositorioFondosEnMemoria",
     "ResultadoPaginado",
 ]

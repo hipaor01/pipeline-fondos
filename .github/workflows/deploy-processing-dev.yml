@@ -1,11 +1,14 @@
 name: Deploy processing to dev
 
 on:
+  workflow_call:
   pull_request:
     paths:
+      - ".github/workflows/deploy-backend-dev.yml"
       - ".github/workflows/deploy-processing-dev.yml"
       - "contracts/**"
       - "database/**"
+      - "api/repositories/aurora.py"
       - "infra/bootstrap/processing_cd_permissions.tf"
       - "infra/environments/dev/processing/**"
       - "infra/environments/dev/processing-registry/**"
@@ -17,22 +20,6 @@ on:
       - "pyproject.toml"
       - "tests/procesamiento/**"
       - "uv.lock"
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/deploy-processing-dev.yml"
-      - "database/**"
-      - "infra/environments/dev/processing/**"
-      - "infra/environments/dev/processing-registry/**"
-      - ".github/actions/publish-ecr-image/**"
-      - "infra/modules/container_registry/**"
-      - "infra/modules/database/**"
-      - "infra/modules/processing/**"
-      - "procesamiento/**"
-      - "pyproject.toml"
-      - "uv.lock"
-  workflow_dispatch:
-
 permissions:
   contents: read
 
@@ -80,7 +67,7 @@ jobs:
         run: uv sync --group dev --group test-procesamiento --locked
 
       - name: Lint
-        run: uv run --group dev --group test-procesamiento ruff check procesamiento tests/procesamiento
+        run: uv run --group dev --group test-procesamiento ruff check database/*.py procesamiento tests/procesamiento
 
       - name: Type-check
         run: uv run --group dev --group test-procesamiento mypy procesamiento --ignore-missing-imports

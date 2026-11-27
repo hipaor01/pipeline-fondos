@@ -13,7 +13,7 @@ import re
 import sys
 from pathlib import Path
 
-from procesamiento.datos.ejecutor import EjecutorDataAPI, EjecutorPsycopg, EjecutorSQL
+from database.ejecutor import EjecutorDataAPI, EjecutorPsycopg, EjecutorSQL
 
 CARPETA = Path(__file__).resolve().parents[2] / "database" / "migrations"
 

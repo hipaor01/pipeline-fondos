@@ -239,7 +239,7 @@ def procesar(objeto: eventos.ObjetoS3, dep: Dependencias, intento: int) -> str:
 
 
 def dependencias_desde_entorno() -> Dependencias:
-    from procesamiento.datos.ejecutor import EjecutorDataAPI
+    from database.ejecutor import EjecutorDataAPI
 
     entorno = os.environ
     return Dependencias(
