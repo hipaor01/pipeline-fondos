@@ -252,6 +252,7 @@ data "aws_iam_policy_document" "github_actions_capture_services" {
       "states:CreateStateMachine",
       "states:DeleteStateMachine",
       "states:DescribeStateMachine",
+      "states:ListStateMachineVersions",
       "states:ListTagsForResource",
       "states:TagResource",
       "states:UntagResource",
