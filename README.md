@@ -193,6 +193,19 @@ uv run --group extraccion python structured_output/ejemplo_kid.py
 uv run --group extraccion python structured_output/ejemplo_kid.py descargas/bestinver/bestinver-renta_datos_fundamentales.md
 ```
 
+## Procesamiento y datos en AWS (P2)
+
+Versión desplegable de las etapas 2 y 3: Lambdas disparadas por S3 a través de
+EventBridge y SQS, extracción con salida estructurada de Bedrock, JSON de
+auditoría y carga idempotente en Aurora PostgreSQL. Arquitectura, estados,
+decisiones, tests y dependencias con los otros frentes en
+[`procesamiento/README.md`](procesamiento/README.md).
+
+```bash
+uv sync --group dev --group test-procesamiento
+uv run pytest -q tests/procesamiento
+```
+
 ## Contrato de la API
 
 La especificación OpenAPI se encuentra en
@@ -375,5 +388,5 @@ documentos se referencia, pero este workflow no lo crea ni lo modifica.
 ## Próximas etapas
 
 - [x] Extraer información de los KID descargados (PDF → Markdown → datos estructurados).
-- [ ] Leer los PDF de S3 y guardar los Markdown y los datos extraídos.
+- [x] Leer los PDF de S3 y guardar los Markdown y los datos extraídos (P2, `procesamiento/`).
 - [ ] Añadir otras gestoras.

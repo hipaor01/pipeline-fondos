@@ -1,0 +1,274 @@
+name: Deploy processing to dev
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/deploy-processing-dev.yml"
+      - "contracts/**"
+      - "database/**"
+      - "infra/bootstrap/processing_cd_permissions.tf"
+      - "infra/environments/dev/processing/**"
+      - "infra/environments/dev/processing-registry/**"
+      - ".github/actions/publish-ecr-image/**"
+      - "infra/modules/container_registry/**"
+      - "infra/modules/database/**"
+      - "infra/modules/processing/**"
+      - "procesamiento/**"
+      - "pyproject.toml"
+      - "tests/procesamiento/**"
+      - "uv.lock"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/deploy-processing-dev.yml"
+      - "database/**"
+      - "infra/environments/dev/processing/**"
+      - "infra/environments/dev/processing-registry/**"
+      - ".github/actions/publish-ecr-image/**"
+      - "infra/modules/container_registry/**"
+      - "infra/modules/database/**"
+      - "infra/modules/processing/**"
+      - "procesamiento/**"
+      - "pyproject.toml"
+      - "uv.lock"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AWS_ACCOUNT_ID: "065451207233"
+  AWS_REGION: eu-west-3
+  TF_STATE_BUCKET: pipeline-fondos-terraform-state-065451207233
+  TERRAFORM_VERSION: "1.15.8"
+  UV_VERSION: "0.13.7"
+
+jobs:
+  quality:
+    name: Test and validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install 3.14
+
+      - name: Install dependencies
+        run: uv sync --group dev --group test-procesamiento --locked
+
+      - name: Lint
+        run: uv run --group dev --group test-procesamiento ruff check procesamiento tests/procesamiento
+
+      - name: Type-check
+        run: uv run --group dev --group test-procesamiento mypy procesamiento --ignore-missing-imports
+
+      - name: Run tests (PostgreSQL 16 real)
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+        run: uv run --group dev --group test-procesamiento pytest -q tests/procesamiento
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Check Terraform formatting
+        run: terraform fmt -check -recursive infra
+
+      - name: Validate and test Terraform
+        run: |
+          for root in infra/environments/dev/processing-registry infra/environments/dev/processing infra/bootstrap; do
+            terraform -chdir="${root}" init -backend=false -input=false
+            terraform -chdir="${root}" validate
+          done
+          terraform -chdir=infra/modules/processing init -backend=false -input=false
+          terraform -chdir=infra/modules/processing test
+
+  deploy:
+    name: Build ARM64 image and deploy
+    needs: quality
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    concurrency:
+      group: deploy-processing-dev
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build ARM64 image without publishing
+        if: github.ref != 'refs/heads/main'
+        run: |
+          docker buildx build \
+            --platform linux/arm64 \
+            --load \
+            --provenance=false \
+            --file procesamiento/Dockerfile \
+            --tag pipeline-fondos-processing:check \
+            .
+          docker run --rm --entrypoint /var/lang/bin/python3 pipeline-fondos-processing:check \
+            -c "import procesamiento.markdown, procesamiento.extraccion; print('handlers OK')"
+
+      - name: Require deployment variables
+        if: github.ref == 'refs/heads/main'
+        env:
+          AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          DOCUMENTS_BUCKET: ${{ vars.CAPTURE_DOCUMENTS_BUCKET }}
+        run: |
+          if [ -z "${AWS_DEPLOY_ROLE_ARN}" ]; then
+            echo "Repository variable AWS_DEPLOY_ROLE_ARN is required" >&2
+            exit 1
+          fi
+          if [ -z "${DOCUMENTS_BUCKET}" ]; then
+            echo "Repository variable CAPTURE_DOCUMENTS_BUCKET is required (same bucket as capture)" >&2
+            exit 1
+          fi
+
+      - name: Set up uv
+        if: github.ref == 'refs/heads/main'
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Set up Terraform
+        if: github.ref == 'refs/heads/main'
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials through OIDC
+        if: github.ref == 'refs/heads/main'
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: processing-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
+          mask-aws-account-id: true
+
+      - name: Verify document bucket and existing notifications
+        if: github.ref == 'refs/heads/main'
+        env:
+          DOCUMENTS_BUCKET: ${{ vars.CAPTURE_DOCUMENTS_BUCKET }}
+        run: |
+          versioning=$(aws s3api get-bucket-versioning --bucket "${DOCUMENTS_BUCKET}" \
+            --expected-bucket-owner "${AWS_ACCOUNT_ID}" --query Status --output text)
+          if [ "${versioning}" != "Enabled" ]; then
+            echo "Document bucket versioning must be Enabled (contract C1)" >&2
+            exit 1
+          fi
+          # Terraform reemplaza la configuración completa: se deja constancia de la anterior.
+          echo "## Notificaciones del bucket antes de aplicar" >> "${GITHUB_STEP_SUMMARY}"
+          aws s3api get-bucket-notification-configuration --bucket "${DOCUMENTS_BUCKET}" \
+            --expected-bucket-owner "${AWS_ACCOUNT_ID}" --output json \
+            | tee -a "${GITHUB_STEP_SUMMARY}"
+
+      - name: Provision processing registry
+        if: github.ref == 'refs/heads/main'
+        id: registry
+        run: |
+          terraform -chdir=infra/environments/dev/processing-registry init -input=false \
+            -backend-config="bucket=${TF_STATE_BUCKET}"
+          terraform -chdir=infra/environments/dev/processing-registry plan -input=false -out=tfplan
+          terraform -chdir=infra/environments/dev/processing-registry apply -input=false tfplan
+
+          repository_name=$(terraform -chdir=infra/environments/dev/processing-registry output -raw repository_name)
+          repository_url=$(terraform -chdir=infra/environments/dev/processing-registry output -raw repository_url)
+          {
+            echo "repository_name=${repository_name}"
+            echo "repository_url=${repository_url}"
+            echo "registry=${repository_url%%/*}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Publish ARM64 image (once per commit)
+        if: github.ref == 'refs/heads/main'
+        id: publish
+        uses: ./.github/actions/publish-ecr-image
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          dockerfile: procesamiento/Dockerfile
+          image-tag: ${{ github.sha }}
+          repository-name: ${{ steps.registry.outputs.repository_name }}
+          repository-url: ${{ steps.registry.outputs.repository_url }}
+
+      - name: Resolve image URI
+        if: github.ref == 'refs/heads/main'
+        id: image
+        env:
+          ECR_REPOSITORY_URL: ${{ steps.registry.outputs.repository_url }}
+          IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
+        run: echo "uri=${ECR_REPOSITORY_URL}@${IMAGE_DIGEST}" >> "${GITHUB_OUTPUT}"
+
+      - name: Deploy database and Lambdas
+        if: github.ref == 'refs/heads/main'
+        id: processing
+        env:
+          TF_VAR_image_uri: ${{ steps.image.outputs.uri }}
+          TF_VAR_documents_bucket_name: ${{ vars.CAPTURE_DOCUMENTS_BUCKET }}
+        run: |
+          terraform -chdir=infra/environments/dev/processing init -input=false \
+            -backend-config="bucket=${TF_STATE_BUCKET}"
+          terraform -chdir=infra/environments/dev/processing plan -input=false -out=tfplan
+          terraform -chdir=infra/environments/dev/processing apply -input=false tfplan
+
+          {
+            echo "cluster_arn=$(terraform -chdir=infra/environments/dev/processing output -raw database_cluster_arn)"
+            echo "secret_arn=$(terraform -chdir=infra/environments/dev/processing output -raw database_secret_arn)"
+            echo "database=$(terraform -chdir=infra/environments/dev/processing output -raw database_name)"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Apply database migrations
+        if: github.ref == 'refs/heads/main'
+        env:
+          DB_CLUSTER_ARN: ${{ steps.processing.outputs.cluster_arn }}
+          DB_SECRET_ARN: ${{ steps.processing.outputs.secret_arn }}
+          DB_NAME: ${{ steps.processing.outputs.database }}
+        run: |
+          uv python install 3.14
+          uv run --group aws --locked python -m procesamiento.datos.migraciones \
+            --cluster-arn "${DB_CLUSTER_ARN}" --secret-arn "${DB_SECRET_ARN}" --base-datos "${DB_NAME}"
+
+      - name: Deployment summary
+        if: github.ref == 'refs/heads/main'
+        env:
+          IMAGE_URI: ${{ steps.image.outputs.uri }}
+        run: |
+          {
+            echo "## Processing deployed to dev"
+            echo
+            echo "- Image: ${IMAGE_URI}"
+            echo "- Functions: $(terraform -chdir=infra/environments/dev/processing output -json function_names)"
+            echo "- DLQs: $(terraform -chdir=infra/environments/dev/processing output -json dlq_names)"
+          } >> "${GITHUB_STEP_SUMMARY}"
