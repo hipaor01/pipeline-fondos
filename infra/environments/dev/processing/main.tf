@@ -32,6 +32,7 @@ module "processing" {
   permissions_boundary_arn    = local.permissions_boundary_arn
 
   bedrock_model_id = var.bedrock_model_id
+  ocr_mode         = "auto"
 
   database_cluster_arn = module.database.cluster_arn
   database_secret_arn  = module.database.secret_arn

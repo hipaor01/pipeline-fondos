@@ -1239,6 +1239,7 @@ lambda-procesamiento = [
     { name = "boto3", extra = ["crt"] },
     { name = "pydantic" },
     { name = "pymupdf4llm" },
+    { name = "rapidocr" },
 ]
 modelos = [
     { name = "pydantic" },
@@ -1261,6 +1262,7 @@ test-procesamiento = [
     { name = "pydantic" },
     { name = "pymupdf4llm" },
     { name = "pytest" },
+    { name = "rapidocr" },
 ]
 
 [package.metadata]
@@ -1299,6 +1301,7 @@ lambda-procesamiento = [
     { name = "boto3", extras = ["crt"] },
     { name = "pydantic", specifier = ">=2.12,<3" },
     { name = "pymupdf4llm", specifier = ">=2.1" },
+    { name = "rapidocr", specifier = ">=3.10" },
 ]
 modelos = [{ name = "pydantic", specifier = ">=2.12,<3" }]
 procesamiento = [
@@ -1319,6 +1322,7 @@ test-procesamiento = [
     { name = "pydantic", specifier = ">=2.12,<3" },
     { name = "pymupdf4llm", specifier = ">=2.1" },
     { name = "pytest", specifier = ">=8,<10" },
+    { name = "rapidocr", specifier = ">=3.10" },
 ]
 
 [[package]]
