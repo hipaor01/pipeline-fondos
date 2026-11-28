@@ -54,6 +54,7 @@ lambda-procesamiento = [
     { include-group = "aws" },
     { include-group = "modelos" },
     "pymupdf4llm>=2.1",
+    "rapidocr>=3.10",
 ]
 test-procesamiento = [
     { include-group = "lambda-procesamiento" },
