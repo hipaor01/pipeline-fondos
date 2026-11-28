@@ -229,7 +229,7 @@ def test_peticion_usa_salida_estructurada_nativa(respuesta_bestinfond):
     formato = cliente.peticiones[0]["outputConfig"]["textFormat"]
     assert formato["type"] == "json_schema"
     assert json.loads(formato["structure"]["jsonSchema"]["schema"]) == ESQUEMA_BEDROCK
-    assert cliente.peticiones[0]["inferenceConfig"]["temperature"] == 0
+    assert "temperature" not in cliente.peticiones[0]["inferenceConfig"]
     assert (
         respuesta.datos["isin"] == "ES0114673033" and respuesta.tokens_entrada == 3000
     )

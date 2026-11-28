@@ -69,7 +69,7 @@ class ExtractorBedrock:
                     ],
                 }
             ],
-            "inferenceConfig": {"maxTokens": self._max_tokens, "temperature": 0},
+            "inferenceConfig": {"maxTokens": self._max_tokens},
             "outputConfig": {
                 "textFormat": {
                     "type": "json_schema",
